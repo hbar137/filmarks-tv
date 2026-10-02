@@ -19,6 +19,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -34,6 +35,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -44,6 +48,7 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -93,7 +98,17 @@ private fun App(s: Settings, store: SettingsStore) {
     var kind by remember { mutableStateOf("movie") }
     var stack by remember { mutableStateOf(listOf<String>()) }
     var update by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) { update = Update.check() }
+    // TV apps stay running for days: check when the app comes back to the
+    // front, and every 30 min while it's open (once at start missed releases)
+    LaunchedEffect(Unit) {
+        while (true) { update = Update.check(); delay(30 * 60 * 1000L) }
+    }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) scope.launch { update = Update.check() } }
+        lifecycle.addObserver(obs)
+        onDispose { lifecycle.removeObserver(obs) }
+    }
     BackHandler(enabled = editing && s.ready || stack.isNotEmpty()) {
         if (editing) editing = false else stack = stack.dropLast(1)
     }
@@ -165,5 +180,6 @@ fun SetupScreen(s: Settings, onSave: (Settings) -> Unit) {
         Button(onClick = { onSave(s.copy(server = server, password = password)) }, modifier = Modifier.dpadRows()) {
             Text(tr(s.en, "保存して接続", "Save and connect"))
         }
+        Text("Filmarks TV " + BuildConfig.VERSION_NAME, color = Palette.muted, fontSize = 14.sp)
     }
 }
