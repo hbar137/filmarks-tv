@@ -79,7 +79,8 @@ class MainActivity : ComponentActivity() {
             .putExtra("subs", JsonArray(r.subs.map { JsonObject(mapOf("url" to JsonPrimitive(it.url), "lang" to JsonPrimitive(it.lang), "label" to JsonPrimitive(it.label))) }).toString())
             .putExtra("scrobblePath", r.scrobblePath).putExtra("scrobbleBody", r.scrobbleBody?.toString())
             .putExtra("introStart", r.introStart).putExtra("introEnd", r.introEnd)
-            .putExtra("nextLabel", if (r.next != null) r.nextLabel else ""))
+            .putExtra("nextLabel", if (r.next != null) r.nextLabel else "")
+            .putExtra("audioLang", r.audioLang))
     }
 }
 
@@ -114,7 +115,9 @@ private fun App(s: Settings, store: SettingsStore) {
         PAGE_SEARCH -> SearchScreen(s, kind, open)
         PAGE_WATCHLIST -> ListScreen(s, "watchlist", open)
         PAGE_HISTORY -> ListScreen(s, "history", open)
-        else -> TitleScreen(s, top) { activity.play(it, s.en) }
+        PAGE_BROWSE -> BrowseScreen(s, kind, open)
+        else -> if (top.startsWith("/people/") || top.startsWith("/en/person/")) PersonScreen(s, top, open)
+                else TitleScreen(s, top, { activity.play(it, s.en) }, open)
     }
 }
 

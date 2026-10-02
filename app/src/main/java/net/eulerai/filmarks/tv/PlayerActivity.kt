@@ -17,7 +17,9 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.lifecycleScope
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Tracks
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
@@ -110,6 +112,19 @@ class PlayerActivity : ComponentActivity() {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (isPlaying) scrobble("start") else if (player.playbackState == Player.STATE_READY) scrobble("pause")
+            }
+        })
+        // the title's own language for audio (Japanese for a Japanese film); the subtitle
+        // language last chosen (kept on the device) for subtitles
+        val prefs = getSharedPreferences("player", MODE_PRIVATE)
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
+            intent.getStringExtra("audioLang")?.takeIf { it != "" }?.let { setPreferredAudioLanguage(it) }
+            prefs.getString("subLang", null)?.let { setPreferredTextLanguage(it) }
+        }.build()
+        player.addListener(object : Player.Listener {
+            override fun onTracksChanged(tracks: Tracks) {
+                val chosen = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_TEXT && it.isSelected }?.getTrackFormat(0)?.language
+                if (chosen != null) prefs.edit().putString("subLang", chosen).apply()
             }
         })
         player.prepare()

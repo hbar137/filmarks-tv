@@ -38,7 +38,7 @@ import kotlinx.serialization.json.put
 
 /** A title page: details, your marks, what can be played, and a series' episodes. */
 @Composable
-fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit) {
+fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen: (String) -> Unit = {}) {
     var t by remember(path) { mutableStateOf<JsonObject?>(null) }
     var error by remember(path) { mutableStateOf("") }
     var status by remember(path) { mutableStateOf("") }
@@ -82,7 +82,7 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit) {
     val isMovie = d.str("media") == "movie"
     fun run(block: suspend () -> PlayRequest?) = scope.launch {
         try {
-            block()?.let { onPlay(it); status = "" }
+            block()?.let { onPlay(it.copy(audioLang = d.str("lang"))); status = "" }
         } catch (e: Exception) {
             status = e.message ?: "error"
         }
@@ -120,6 +120,7 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit) {
                         listed = !listed
                         scope.launch { runCatching { api.post("/app/watchlist", buildJsonObject { put("media", if (isMovie) "movie" else "show"); put("tmdb", tmdb); put("on", listed) }) } }
                     }) { Text(if (listed) tr(s.en, "✓ ウォッチリスト", "✓ Watchlist") else tr(s.en, "＋ ウォッチリスト", "+ Watchlist")) }
+                    TrailerButton(s, d.str("trailer"))
                 }
                 if (status != "") Text(status, color = Palette.muted, modifier = Modifier.padding(top = 8.dp))
             }
@@ -143,17 +144,20 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit) {
             }
             if (!isMovie && tmdb > 0) {
                 item {
-                    Seasons(s, api, plays, d, sbEpisodes, onStatus = { status = it }, onPlay = onPlay)
+                    Seasons(s, api, plays, d, sbEpisodes, onStatus = { status = it }, onPlay = { onPlay(it.copy(audioLang = d.str("lang"))) })
                 }
             }
             // downloads TMDB can't place: their files by number
             for (sb in sbUnmatched) {
                 item { SeedboxFiles(s, api, sb) { n -> status = tr(s.en, "準備中…", "Starting…"); run { plays.seedbox(sb.str("hash"), n, d.str("title")) } } }
             }
-            val people = d.arr("people")
-            if (people.isNotEmpty()) item {
-                Text(people.joinToString("、") { it.str("name") }, color = Palette.muted, maxLines = 3, modifier = Modifier.width(1100.dp))
+            item { CastRow(s, d.arr("people"), onOpen) }
+            val similar = d.arr("similar")
+            if (similar.isNotEmpty()) item {
+                PosterRowOf(s, HomeRow(tr(s.en, "似ている作品", "More like this"), similar), onOpen)
             }
+            item { ReviewsSection(s, api, path) }
+            item { AvistazSection(s, api, path) }
         }
     }
 }
