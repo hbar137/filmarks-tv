@@ -60,11 +60,17 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var nextBox: LinearLayout
     private lateinit var nextText: TextView
     private var countdown = -1
+    private var subsJson: List<JsonObject> = emptyList()
+    private var url = ""
+    private var title = ""
+    private var subShift = 0.0
+    private lateinit var timing: LinearLayout
+    private lateinit var timingLabel: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val url = intent.getStringExtra("url") ?: return finish()
-        val title = intent.getStringExtra("title") ?: ""
+        url = intent.getStringExtra("url") ?: return finish()
+        title = intent.getStringExtra("title") ?: ""
         val start = intent.getLongExtra("start", 0)
         en = intent.getBooleanExtra("en", false)
         progressPath = intent.getStringExtra("progressPath") ?: "/progress"
@@ -97,14 +103,9 @@ class PlayerActivity : ComponentActivity() {
             }
         })
 
-        val subs = (Api.json.parseToJsonElement(intent.getStringExtra("subs") ?: "[]") as? JsonArray).orEmpty()
+        subsJson = (Api.json.parseToJsonElement(intent.getStringExtra("subs") ?: "[]") as? JsonArray).orEmpty()
             .mapNotNull { it as? JsonObject }
-            .map {
-                MediaItem.SubtitleConfiguration.Builder(Uri.parse(it.str("url")))
-                    .setMimeType(MimeTypes.TEXT_VTT).setLanguage(it.str("lang")).setLabel(it.str("label")).build()
-            }
-        player.setMediaItem(MediaItem.Builder().setUri(url).setSubtitleConfigurations(subs)
-            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build())
+        player.setMediaItem(mediaItem())
         player.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) ended()
@@ -139,6 +140,28 @@ class PlayerActivity : ComponentActivity() {
         })
     }
 
+    /** The stream with the online subtitles, moved by subShift seconds (the server shifts them). */
+    private fun mediaItem(): MediaItem = MediaItem.Builder().setUri(url)
+        .setSubtitleConfigurations(subsJson.map {
+            val u = it.str("url") + if (subShift != 0.0) "&shift=$subShift" else ""
+            MediaItem.SubtitleConfiguration.Builder(Uri.parse(u))
+                .setMimeType(MimeTypes.TEXT_VTT).setLanguage(it.str("lang")).setLabel(it.str("label")).build()
+        })
+        .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
+
+    /** Subtitle timing: reload the online subtitles shifted, keeping the position and the chosen language. */
+    private fun shiftSubs(by: Double) {
+        subShift = if (by == 0.0) 0.0 else subShift + by
+        timingLabel.text = tr(en, "字幕 ", "Subtitles ") + "%+.1f".format(subShift) + tr(en, "秒", " s")
+        val lang = player.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_TEXT && it.isSelected }?.getTrackFormat(0)?.language
+        if (lang != null) player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setPreferredTextLanguage(lang).build()
+        val pos = player.currentPosition
+        val playing = player.playWhenReady
+        player.setMediaItem(mediaItem(), pos)
+        player.prepare()
+        player.playWhenReady = playing
+    }
+
     private fun parse(s: String?): JsonObject? = s?.let { runCatching { Api.json.parseToJsonElement(it) as? JsonObject }.getOrNull() }
 
     /** The player, with the skip-intro button and the next-episode panel over it. */
@@ -165,6 +188,22 @@ class PlayerActivity : ComponentActivity() {
             addView(now)
         }
         root.addView(nextBox, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, 64, 64) })
+        timingLabel = TextView(this).apply { setTextColor(Color.WHITE); textSize = 16f; text = tr(en, "字幕 ±0.0秒", "Subtitles ±0.0 s"); setPadding(0, 0, 16, 0) }
+        timing = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(0xAA13131A.toInt())
+            setPadding(24, 12, 24, 12)
+            visibility = View.GONE
+            addView(timingLabel)
+            for ((label, by) in listOf("−0.5" to -0.5, "±0" to 0.0, "+0.5" to 0.5)) {
+                addView(Button(this@PlayerActivity).apply { text = label; setOnClickListener { shiftSubs(by) } })
+            }
+        }
+        root.addView(timing, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, 48, 64, 0) })
+        view.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v ->
+            timing.visibility = if (v == View.VISIBLE && subsJson.isNotEmpty()) View.VISIBLE else View.GONE
+        })
         return root
     }
 
