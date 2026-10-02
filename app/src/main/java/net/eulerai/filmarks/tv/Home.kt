@@ -1,3 +1,5 @@
+@file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
+
 package net.eulerai.filmarks.tv
 
 import androidx.compose.foundation.layout.Arrangement
