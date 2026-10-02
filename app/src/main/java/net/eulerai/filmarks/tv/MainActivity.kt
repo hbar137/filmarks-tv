@@ -23,6 +23,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -64,6 +71,23 @@ private fun Title(text: String) {
     Text(text, fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Palette.text)
 }
 
+/**
+ * On a TV a text field keeps Up/Down for its own cursor, so the remote
+ * could never leave it: Up/Down move focus between the form's rows instead.
+ */
+@Composable
+private fun Modifier.dpadRows(): Modifier {
+    val focus = LocalFocusManager.current
+    return onPreviewKeyEvent {
+        if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        when (it.key) {
+            Key.DirectionDown -> focus.moveFocus(FocusDirection.Down)
+            Key.DirectionUp -> focus.moveFocus(FocusDirection.Up)
+            else -> false
+        }
+    }
+}
+
 /** Server address and password (the Kodi password). */
 @Composable
 fun SetupScreen(s: Settings, onSave: (Settings) -> Unit) {
@@ -77,13 +101,13 @@ fun SetupScreen(s: Settings, onSave: (Settings) -> Unit) {
     Column(Modifier.padding(64.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Title(tr(s.en, "サーバー設定", "Server"))
         OutlinedTextField(server, { server = it }, label = { androidx.compose.material3.Text(tr(s.en, "サーバー", "Server")) },
-            singleLine = true, colors = colors, modifier = Modifier.width(640.dp),
+            singleLine = true, colors = colors, modifier = Modifier.width(640.dp).dpadRows(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
         OutlinedTextField(password, { password = it }, label = { androidx.compose.material3.Text(tr(s.en, "パスワード", "Password")) },
-            singleLine = true, colors = colors, modifier = Modifier.width(640.dp),
+            singleLine = true, colors = colors, modifier = Modifier.width(640.dp).dpadRows(),
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
-        Button(onClick = { onSave(s.copy(server = server, password = password)) }) {
+        Button(onClick = { onSave(s.copy(server = server, password = password)) }, modifier = Modifier.dpadRows()) {
             Text(tr(s.en, "保存して接続", "Save and connect"))
         }
     }
