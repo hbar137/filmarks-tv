@@ -1,0 +1,109 @@
+package net.eulerai.filmarks.tv
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.tv.material3.Card
+import androidx.tv.material3.CardDefaults
+import androidx.tv.material3.FilterChip
+import androidx.tv.material3.OutlinedButton
+import androidx.tv.material3.Text
+import coil.compose.AsyncImage
+import kotlinx.serialization.json.JsonObject
+
+data class HomeRow(val title: String, val cards: List<JsonObject>)
+
+/** Poster rows, as the website's home: Downloads first, then Filmarks' / TMDB rows. */
+@Composable
+fun HomeScreen(s: Settings, kind: String, onKind: (String) -> Unit, onLang: () -> Unit, onSettings: () -> Unit, onOpen: (String) -> Unit) {
+    var rows by remember(s, kind) { mutableStateOf<List<HomeRow>?>(null) }
+    var error by remember(s, kind) { mutableStateOf("") }
+    LaunchedEffect(s, kind) {
+        try {
+            val d = Api(s).get("/app/home", "lang" to s.lang, "kind" to kind)
+            rows = d.arr("rows").map { HomeRow(it.str("title"), it.arr("cards")) }
+        } catch (e: Exception) {
+            error = e.message ?: e.javaClass.simpleName
+        }
+    }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.padding(start = 48.dp, end = 48.dp, top = 24.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("FILMARKS ", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Palette.text)
+            Text("ARCHIVE", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Palette.gold, modifier = Modifier.padding(end = 24.dp))
+            for ((k, label) in listOf("movie" to tr(s.en, "映画", "Movies"), "drama" to tr(s.en, "ドラマ", "Shows"), "anime" to tr(s.en, "アニメ", "Anime"))) {
+                FilterChip(selected = kind == k, onClick = { onKind(k) }) { Text(label) }
+            }
+            Box(Modifier.weight(1f))
+            OutlinedButton(onClick = onLang) { Text(if (s.en) "日本語" else "English") }
+            OutlinedButton(onClick = onSettings) { Text(tr(s.en, "設定", "Settings")) }
+        }
+        when {
+            error != "" -> Text(error, color = Palette.red, modifier = Modifier.padding(48.dp))
+            rows == null -> Text(tr(s.en, "読み込み中…", "Loading…"), color = Palette.muted, modifier = Modifier.padding(48.dp))
+            else -> LazyColumn(contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                items(rows!!) { row -> PosterRow(s, row, onOpen) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PosterRow(s: Settings, row: HomeRow, onOpen: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(row.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Palette.text, modifier = Modifier.padding(start = 48.dp))
+        LazyRow(contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            items(row.cards) { c -> PosterCard(s, c) { onOpen(c.str("path")) } }
+        }
+    }
+}
+
+@Composable
+fun PosterCard(s: Settings, c: JsonObject, onClick: () -> Unit) {
+    Column(Modifier.width(140.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Card(onClick = onClick, modifier = Modifier.size(140.dp, 210.dp),
+            colors = CardDefaults.colors(containerColor = Palette.bg2)) {
+            Box(Modifier.fillMaxSize()) {
+                Text(c.str("title"), color = Palette.muted, fontSize = 13.sp, modifier = Modifier.padding(10.dp))
+                if (c.str("poster") != "") {
+                    AsyncImage(model = c.str("poster"), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                }
+            }
+        }
+        Text(c.str("title"), color = Palette.text, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        val sub = listOfNotNull(
+            c.long("year").takeIf { it > 0 }?.toString(),
+            when {
+                c.dbl("imdb") > 0 -> "IMDb %.1f".format(c.dbl("imdb"))
+                !c.str("kind").startsWith("en") && c.dbl("score") > 0 -> "★ %.1f".format(c.dbl("score"))
+                else -> null
+            },
+            c.str("note").takeIf { it != "" },
+        ).joinToString(" · ")
+        Text(sub, color = Palette.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().height(16.dp))
+    }
+}

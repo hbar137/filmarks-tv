@@ -1,7 +1,9 @@
 package net.eulerai.filmarks.tv
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +31,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -40,7 +43,6 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.jsonArray
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,19 +52,36 @@ class MainActivity : ComponentActivity() {
             FilmarksTheme {
                 val settings by store.settings.collectAsState(initial = null)
                 Box(Modifier.fillMaxSize().background(Palette.bg)) {
-                    settings?.let { s ->
-                        var editing by remember { mutableStateOf(!s.ready) }
-                        val scope = rememberCoroutineScope()
-                        if (editing) {
-                            SetupScreen(s) { scope.launch { store.save(it); editing = false } }
-                        } else {
-                            StatusScreen(s, onSettings = { editing = true },
-                                onLang = { scope.launch { store.save(s.copy(lang = if (s.en) "ja" else "en")) } })
-                        }
-                    }
+                    settings?.let { s -> App(s, store) }
                 }
             }
         }
+    }
+
+    fun play(r: PlayRequest) {
+        startActivity(Intent(this, PlayerActivity::class.java)
+            .putExtra("url", r.url).putExtra("title", r.title).putExtra("start", r.startSec)
+            .putExtra("progressPath", r.progressPath).putExtra("progressBody", r.progressBody.toString()))
+    }
+}
+
+/** Home → title pages, as a stack the remote's Back pops. */
+@Composable
+private fun App(s: Settings, store: SettingsStore) {
+    val scope = rememberCoroutineScope()
+    val activity = LocalContext.current as MainActivity
+    var editing by remember { mutableStateOf(!s.ready) }
+    var kind by remember { mutableStateOf("movie") }
+    var stack by remember { mutableStateOf(listOf<String>()) }
+    BackHandler(enabled = editing && s.ready || stack.isNotEmpty()) {
+        if (editing) editing = false else stack = stack.dropLast(1)
+    }
+    when {
+        editing -> SetupScreen(s) { scope.launch { store.save(it); editing = false } }
+        stack.isNotEmpty() -> TitleScreen(s, stack.last()) { activity.play(it) }
+        else -> HomeScreen(s, kind, onKind = { kind = it },
+            onLang = { scope.launch { store.save(s.copy(lang = if (s.en) "ja" else "en")) } },
+            onSettings = { editing = true }, onOpen = { stack = stack + it })
     }
 }
 
@@ -110,36 +129,5 @@ fun SetupScreen(s: Settings, onSave: (Settings) -> Unit) {
         Button(onClick = { onSave(s.copy(server = server, password = password)) }, modifier = Modifier.dpadRows()) {
             Text(tr(s.en, "保存して接続", "Save and connect"))
         }
-    }
-}
-
-/** Step 1's home: proves the connection (ping + the seedbox list). */
-@Composable
-fun StatusScreen(s: Settings, onSettings: () -> Unit, onLang: () -> Unit) {
-    var status by remember(s) { mutableStateOf(tr(s.en, "接続中…", "Connecting…")) }
-    LaunchedEffect(s) {
-        status = try {
-            val api = Api(s)
-            api.get("/ping")
-            val n = api.get("/seedbox")["downloads"]?.jsonArray?.size ?: 0
-            tr(s.en, "接続しました · ダウンロード $n 件", "Connected · $n downloads")
-        } catch (e: ApiException) {
-            if (e.code == 401) tr(s.en, "パスワードが違います", "Wrong password") else "${e.code}: ${e.message}"
-        } catch (e: Exception) {
-            tr(s.en, "接続できません: ", "Can't connect: ") + (e.message ?: e.javaClass.simpleName)
-        }
-    }
-    Column(Modifier.padding(64.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        Row {
-            Text("FILMARKS ", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Palette.text)
-            Text("ARCHIVE", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Palette.gold)
-        }
-        Text(status, style = MaterialTheme.typography.titleLarge, color = Palette.text)
-        Text(s.server, color = Palette.muted)
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            OutlinedButton(onClick = onLang) { Text(if (s.en) "日本語" else "English") }
-            OutlinedButton(onClick = onSettings) { Text(tr(s.en, "設定", "Settings")) }
-        }
-        Text("v" + BuildConfig.VERSION_NAME, color = Palette.muted, fontSize = 14.sp)
     }
 }
