@@ -1,0 +1,7 @@
+<resources>
+    <!-- Pure black behind everything: letterbox bars, and the moment before Compose draws -->
+    <style name="Theme.Filmarks" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:colorBackground">@android:color/black</item>
+    </style>
+</resources>

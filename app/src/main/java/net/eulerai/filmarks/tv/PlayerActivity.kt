@@ -1,5 +1,6 @@
 package net.eulerai.filmarks.tv
 
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -11,6 +12,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,8 +44,15 @@ class PlayerActivity : ComponentActivity() {
         progressBody = Api.json.parseToJsonElement(intent.getStringExtra("progressBody") ?: "{}") as JsonObject
         lifecycleScope.launch { api = Api(SettingsStore(applicationContext).settings.first()) }
 
-        player = ExoPlayer.Builder(this).build()
-        val view = PlayerView(this).apply { this.player = this@PlayerActivity.player; keepScreenOn = true }
+        player = ExoPlayer.Builder(this).setSeekBackIncrementMs(SEEK_MS).setSeekForwardIncrementMs(SEEK_MS).build()
+        val view = PlayerView(this).apply {
+            this.player = this@PlayerActivity.player
+            keepScreenOn = true
+            setBackgroundColor(Color.BLACK) // letterbox bars
+            setShutterBackgroundColor(Color.BLACK)
+            // the bar's default step is 1/20 of the film (minutes): 10 s per press, held = continuous
+            findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress)?.setKeyTimeIncrement(SEEK_MS)
+        }
         setContentView(view)
         // Back first hides the controls; only with them hidden does it leave the film
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -87,6 +96,7 @@ class PlayerActivity : ComponentActivity() {
     }
 
     companion object {
+        private const val SEEK_MS = 10_000L
         private val saves = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 
