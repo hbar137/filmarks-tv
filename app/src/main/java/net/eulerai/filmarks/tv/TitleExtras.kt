@@ -17,6 +17,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
@@ -118,8 +120,9 @@ fun AvistazSection(s: Settings, api: Api, path: String) {
     var rs by remember(path) { mutableStateOf<List<JsonObject>?>(null) }
     var status by remember(path) { mutableStateOf("") }
     var sent by remember(path) { mutableStateOf(setOf<String>()) }
+    var armed by remember(path) { mutableStateOf("") } // pressed once: sending counts against the ratio
     val scope = rememberCoroutineScope()
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (rs == null) OutlinedButton(onClick = {
             status = tr(s.en, "AvistaZ を検索中…", "Searching AvistaZ…")
             scope.launch {
@@ -132,33 +135,60 @@ fun AvistazSection(s: Settings, api: Api, path: String) {
         }) { Text(tr(s.en, "AvistaZ で検索", "Search AvistaZ")) }
         val first = remember(path) { FocusRequester() }
         LaunchedEffect(rs) { if (rs.orEmpty().isNotEmpty()) runCatching { first.requestFocus() } }
+        if (rs.orEmpty().isNotEmpty()) Text("AvistaZ · " + tr(s.en, "${rs!!.size} 件", "${rs!!.size} releases"),
+            color = Palette.muted, fontSize = 14.sp)
         rs.orEmpty().forEachIndexed { i, r ->
             val cost = when {
-                r.dbl("download_multiply") == 0.0 -> tr(s.en, "フリーリーチ", "freeleech")
+                r.dbl("download_multiply") == 0.0 -> tr(s.en, "フリーリーチ", "Freeleech")
                 r.dbl("download_multiply") < 1 -> "DL ×%.1f".format(r.dbl("download_multiply"))
                 else -> ""
             }
-            val line = listOf(r.str("quality"), "%.1f GB".format(r.long("size_bytes") / 1e9), "↑${r.long("seeders")} ↓${r.long("leechers")}",
-                r.str("rip_type"), cost, r.strs("audio").joinToString("/")).filter { it != "" }.joinToString(" · ")
+            val details = listOf("%.1f GB".format(r.long("size_bytes") / 1e9), "↑${r.long("seeders")} ↓${r.long("leechers")}",
+                r.str("rip_type"), cost, r.strs("audio").joinToString("/"), r.str("uploaded")).filter { it != "" }.joinToString("  ·  ")
             val hash = r.str("hash")
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Column(Modifier.width(860.dp)) {
-                    Text(r.str("title"), color = Palette.text, maxLines = 1)
-                    Text(line, color = Palette.muted, fontSize = 12.sp)
-                }
-                val fm = if (i == 0) Modifier.focusRequester(first) else Modifier
-                if (hash in sent) Button(onClick = {}, modifier = fm) { Text(tr(s.en, "✓ 送信済み", "✓ Sent")) }
-                else OutlinedButton(modifier = fm, onClick = {
+            val action = when (hash) {
+                in sent -> tr(s.en, "✓ 送信済み", "✓ Sent")
+                armed -> tr(s.en, "もう一度押して送信", "Press again to send")
+                else -> tr(s.en, "シードボックスへ", "To seedbox")
+            }
+            ReleaseCard(r.str("quality"), r.str("title"), details, action, modifier = if (i == 0) Modifier.focusRequester(first) else Modifier,
+                actionColor = if (hash == armed) Palette.red else Palette.gold, onClick = {
+                    if (hash in sent) return@ReleaseCard
+                    if (armed != hash) { armed = hash; return@ReleaseCard }
+                    armed = ""
                     scope.launch {
                         try {
                             api.post("/app/avistaz$path/$hash", buildJsonObject { })
                             sent = sent + hash
-                            status = tr(s.en, "シードボックスに送りました。ダウンロードの進行は「ダウンロード」で。", "Sent to the seedbox. Progress is under Downloads.")
+                            status = tr(s.en, "シードボックスに送りました。進行は「ダウンロード」で。", "Sent to the seedbox. Progress is under Downloads.")
                         } catch (e: Exception) { status = e.message ?: "error" }
                     }
-                }) { Text(tr(s.en, "シードボックスへ", "To seedbox")) }
-            }
+                })
         }
         if (status != "") Text(status, color = Palette.muted)
+    }
+}
+
+/**
+ * One release as a compact row card: quality badge, name, details, and
+ * the action at the right (AvistaZ, Real-Debrid links, other releases).
+ */
+@Composable
+fun ReleaseCard(quality: String, name: String, details: String, action: String, onClick: () -> Unit,
+                modifier: Modifier = Modifier, actionColor: androidx.compose.ui.graphics.Color = Palette.gold) {
+    Card(onClick = onClick, shape = CardDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),
+        colors = CardDefaults.colors(containerColor = Palette.card, focusedContainerColor = Palette.bg2),
+        scale = CardDefaults.scale(focusedScale = 1.02f),
+        modifier = modifier.width(1100.dp)) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text(quality.ifEmpty { "—" }, color = Palette.gold, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                modifier = Modifier.width(56.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(name, color = Palette.text, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (details != "") Text(details, color = Palette.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (action != "") Text(action, color = actionColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
     }
 }

@@ -129,18 +129,13 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen
             item { AvistazSection(s, api, d.str("avistaz_path")) }
             rdLinks?.takeIf { it.isNotEmpty() }?.let { links ->
                 item {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("Real-Debrid", color = Palette.muted, fontSize = 14.sp)
                         for (l in links) {
-                            val size = l.long("file_size").takeIf { it > 0 }?.let { "%.1f GB".format(it / 1e9) }
-                            val label = listOfNotNull(l.str("quality").ifEmpty { null }, size,
-                                l.long("seeders").takeIf { it > 0 }?.let { tr(s.en, "シード $it", "$it seeders") }).joinToString(" · ")
-                            OutlinedButton(onClick = { status = tr(s.en, "準備中…", "Starting…"); run { plays.rdMovie(tmdb, l.long("id"), d.str("title")) } }) {
-                                Column {
-                                    Text("▶ $label")
-                                    Text(l.str("filename").ifEmpty { l.str("torrent_title") }, fontSize = 12.sp, color = Palette.muted, maxLines = 1)
-                                }
-                            }
+                            val details = listOfNotNull(l.long("file_size").takeIf { it > 0 }?.let { "%.1f GB".format(it / 1e9) },
+                                l.long("seeders").takeIf { it > 0 }?.let { tr(s.en, "シード $it", "$it seeders") }).joinToString("  ·  ")
+                            ReleaseCard(l.str("quality"), l.str("filename").ifEmpty { l.str("torrent_title") }, details, "▶ " + tr(s.en, "再生", "Play"),
+                                onClick = { status = tr(s.en, "準備中…", "Starting…"); run { plays.rdMovie(tmdb, l.long("id"), d.str("title")) } })
                         }
                         OtherReleases(s, api, tmdb, onStatus = { status = it }) { link ->
                             status = tr(s.en, "準備中…", "Starting…"); run { plays.rdMovie(tmdb, link, d.str("title")) }
@@ -301,23 +296,20 @@ private fun OtherReleases(s: Settings, api: Api, tmdb: Long, onStatus: (String) 
     val first = remember(tmdb) { FocusRequester() }
     LaunchedEffect(cands) { if (cands.orEmpty().isNotEmpty()) runCatching { first.requestFocus() } }
     cands!!.forEachIndexed { i, c ->
-        val label = listOf(c.str("quality"), "%.1f GB".format(c.long("size_bytes") / 1e9), tr(s.en, "シード ", "seeds ") + c.long("seeders")).joinToString(" · ")
-        OutlinedButton(modifier = if (i == 0) Modifier.focusRequester(first) else Modifier, onClick = {
-            onStatus(tr(s.en, "Real-Debrid で準備中…", "Getting it from Real-Debrid…"))
-            scope.launch {
-                try {
-                    val body = buildJsonObject {
-                        put("hash", c.str("hash")); put("file_idx", c.long("file_idx")); put("filename", c.str("filename"))
-                        put("quality", c.str("quality")); put("title", c.str("title")); put("seeders", c.long("seeders"))
-                    }
-                    onLink(api.post("/app/rd-resolve/$tmdb", body)["link"].obj()?.long("id") ?: throw Exception("no link"))
-                } catch (e: Exception) { onStatus(e.message ?: "error") }
-            }
-        }) {
-            Column {
-                Text(label)
-                Text(c.str("title"), fontSize = 12.sp, color = Palette.muted, maxLines = 1)
-            }
-        }
+        val details = listOf("%.1f GB".format(c.long("size_bytes") / 1e9), tr(s.en, "シード ", "seeds ") + c.long("seeders"),
+            c.str("source")).filter { it != "" }.joinToString("  ·  ")
+        ReleaseCard(c.str("quality"), c.str("title"), details, "▶ " + tr(s.en, "再生", "Play"),
+            modifier = if (i == 0) Modifier.focusRequester(first) else Modifier, onClick = {
+                onStatus(tr(s.en, "Real-Debrid で準備中…", "Getting it from Real-Debrid…"))
+                scope.launch {
+                    try {
+                        val body = buildJsonObject {
+                            put("hash", c.str("hash")); put("file_idx", c.long("file_idx")); put("filename", c.str("filename"))
+                            put("quality", c.str("quality")); put("title", c.str("title")); put("seeders", c.long("seeders"))
+                        }
+                        onLink(api.post("/app/rd-resolve/$tmdb", body)["link"].obj()?.long("id") ?: throw Exception("no link"))
+                    } catch (e: Exception) { onStatus(e.message ?: "error") }
+                }
+            })
     }
 }
