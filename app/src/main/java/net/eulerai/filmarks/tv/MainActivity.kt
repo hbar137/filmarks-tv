@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -61,11 +62,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    fun play(r: PlayRequest) {
-        startActivity(Intent(this, PlayerActivity::class.java)
-            .putExtra("url", r.url).putExtra("title", r.title).putExtra("start", r.startSec)
+    // the next episode to play when the player reports its episode ended
+    private var pendingNext: (() -> Unit)? = null
+    private val playerResult = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        val next = pendingNext
+        pendingNext = null
+        if (res.resultCode == RESULT_OK && res.data?.getBooleanExtra("playNext", false) == true) next?.invoke()
+    }
+
+    fun play(r: PlayRequest, en: Boolean) {
+        pendingNext = r.next
+        playerResult.launch(Intent(this, PlayerActivity::class.java)
+            .putExtra("url", r.url).putExtra("title", r.title).putExtra("start", r.startSec).putExtra("en", en)
             .putExtra("progressPath", r.progressPath).putExtra("progressBody", r.progressBody.toString())
-            .putExtra("subs", JsonArray(r.subs.map { JsonObject(mapOf("url" to JsonPrimitive(it.url), "lang" to JsonPrimitive(it.lang), "label" to JsonPrimitive(it.label))) }).toString()))
+            .putExtra("subs", JsonArray(r.subs.map { JsonObject(mapOf("url" to JsonPrimitive(it.url), "lang" to JsonPrimitive(it.lang), "label" to JsonPrimitive(it.label))) }).toString())
+            .putExtra("scrobblePath", r.scrobblePath).putExtra("scrobbleBody", r.scrobbleBody?.toString())
+            .putExtra("introStart", r.introStart).putExtra("introEnd", r.introEnd)
+            .putExtra("nextLabel", if (r.next != null) r.nextLabel else ""))
     }
 }
 
@@ -85,7 +98,7 @@ private fun App(s: Settings, store: SettingsStore) {
     when {
         editing -> SetupScreen(s) { scope.launch { store.save(it); editing = false } }
         stack.lastOrNull() == DOWNLOADS -> DownloadsScreen(s) { stack = stack + it }
-        stack.isNotEmpty() -> TitleScreen(s, stack.last()) { activity.play(it) }
+        stack.isNotEmpty() -> TitleScreen(s, stack.last()) { activity.play(it, s.en) }
         else -> HomeScreen(s, kind, onKind = { kind = it },
             onLang = { scope.launch { store.save(s.copy(lang = if (s.en) "ja" else "en")) } },
             onSettings = { editing = true }, onDownloads = { stack = stack + DOWNLOADS }, onOpen = { stack = stack + it })
