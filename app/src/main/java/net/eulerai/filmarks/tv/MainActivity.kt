@@ -21,6 +21,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,15 +58,25 @@ import kotlinx.serialization.json.JsonPrimitive
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Report.install(this)
+        deepLink.value = intent?.data?.getQueryParameter("path")
         val store = SettingsStore(applicationContext)
         setContent {
             FilmarksTheme {
                 val settings by store.settings.collectAsState(initial = null)
                 Box(Modifier.fillMaxSize().background(Palette.bg)) {
-                    settings?.let { s -> App(s, store) }
+                    settings?.let { s -> App(s, store, deepLink) }
                 }
             }
         }
+    }
+
+    // a title to open, from the Google TV home's Continue watching (filmarkstv://open?path=)
+    val deepLink = mutableStateOf<String?>(null)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        deepLink.value = intent.data?.getQueryParameter("path")
     }
 
     // the next episode to play when the player reports its episode ended
@@ -85,19 +96,23 @@ class MainActivity : ComponentActivity() {
             .putExtra("scrobblePath", r.scrobblePath).putExtra("scrobbleBody", r.scrobbleBody?.toString())
             .putExtra("introStart", r.introStart).putExtra("introEnd", r.introEnd)
             .putExtra("nextLabel", if (r.next != null) r.nextLabel else "")
-            .putExtra("audioLang", r.audioLang))
+            .putExtra("audioLang", r.audioLang).putExtra("path", r.path).putExtra("poster", r.poster))
     }
 }
 
 /** Home → pages and title pages, as a stack the remote's Back pops. */
 @Composable
-private fun App(s: Settings, store: SettingsStore) {
+private fun App(s: Settings, store: SettingsStore, deepLink: MutableState<String?>) {
     val scope = rememberCoroutineScope()
     val activity = LocalContext.current as MainActivity
     var editing by remember { mutableStateOf(!s.ready) }
     var kind by remember { mutableStateOf("movie") }
     var stack by remember { mutableStateOf(listOf<String>()) }
     var update by remember { mutableStateOf("") }
+    LaunchedEffect(deepLink.value) {
+        deepLink.value?.takeIf { it.startsWith("/") }?.let { stack = listOf(it) }
+        deepLink.value = null
+    }
     // TV apps stay running for days: check when the app comes back to the
     // front, and every 30 min while it's open (once at start missed releases)
     LaunchedEffect(Unit) {

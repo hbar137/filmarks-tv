@@ -31,6 +31,8 @@ data class PlayRequest(
     val nextLabel: String = "",
     val next: (() -> Unit)? = null,
     val audioLang: String = "", // the title's original language: its audio track is chosen first
+    val path: String = "",      // the title's page (Watch Next opens it)
+    val poster: String = "",
 )
 
 /** Turns a choice on a title page into a PlayRequest, through the server's device API. */

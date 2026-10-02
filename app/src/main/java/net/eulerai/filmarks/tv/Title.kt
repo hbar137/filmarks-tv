@@ -84,9 +84,18 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen
     val isMovie = d.str("media") == "movie"
     fun run(block: suspend () -> PlayRequest?) = scope.launch {
         try {
-            block()?.let { onPlay(it.copy(audioLang = d.str("lang"))); status = "" }
+            block()?.let { onPlay(it.copy(audioLang = d.str("lang"), path = path, poster = d.str("poster"))); status = "" }
         } catch (e: Exception) {
             status = e.message ?: "error"
+        }
+    }
+    // a download's files by number, the next one queued for the countdown
+    fun playFile(hash: String, files: List<JsonObject>, i: Int) {
+        status = tr(s.en, "準備中…", "Starting…")
+        run {
+            val r = plays.seedbox(hash, files[i].long("number").toInt(), d.str("title"))
+            val nx = files.getOrNull(i + 1)
+            if (nx == null) r else r.copy(nextLabel = tr(s.en, "第${nx.long("number")}話", "E${nx.long("number")}"), next = { playFile(hash, files, i + 1) })
         }
     }
     fun loadRD() = scope.launch {
@@ -145,12 +154,13 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen
             }
             if (!isMovie && tmdb > 0) {
                 item {
-                    Seasons(s, api, plays, d, sbEpisodes, onStatus = { status = it }, onPlay = { onPlay(it.copy(audioLang = d.str("lang"))) })
+                    Seasons(s, api, plays, d, sbEpisodes, onStatus = { status = it },
+                        onPlay = { onPlay(it.copy(audioLang = d.str("lang"), path = path, poster = d.str("poster"))) })
                 }
             }
             // downloads TMDB can't place: their files by number
             for (sb in sbUnmatched) {
-                item { SeedboxFiles(s, api, sb) { n -> status = tr(s.en, "準備中…", "Starting…"); run { plays.seedbox(sb.str("hash"), n, d.str("title")) } } }
+                item { SeedboxFiles(s, api, sb) { files, i -> playFile(sb.str("hash"), files, i) } }
             }
             item { CastRow(s, d.arr("people"), onOpen) }
             val similar = d.arr("similar")
@@ -224,22 +234,36 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, sb: Map<
         val eps = sd.arr("episodes")
         val watched = sd["watched"].obj()
         val show = sd["show"].obj() ?: JsonObject(emptyMap())
-        fun playAt(i: Int) {
-            val ep = eps[i]
+        // plays episode i of a season's list; the next is the following episode,
+        // or the next season's first (fetched when this is the season's last)
+        fun start(seasonNum: Int, list: List<JsonObject>, showInfo: JsonObject, i: Int) {
+            val ep = list[i]
             onStatus(tr(s.en, "準備中…", "Starting…"))
             scope.launch {
                 try {
-                    val r = plays.episode(show, ep, sb[ep.long("id")], onStatus)
-                    val next = eps.getOrNull(i + 1)
-                    onPlay(if (next == null) r else r.copy(
-                        nextLabel = "E${next.long("episode_number")} " + next.str("name"),
-                        next = { playAt(i + 1) }))
+                    val r = plays.episode(showInfo, ep, sb[ep.long("id")], onStatus)
+                    var label = ""
+                    var next: (() -> Unit)? = null
+                    val nx = list.getOrNull(i + 1)
+                    if (nx != null) {
+                        label = "E${nx.long("episode_number")} " + nx.str("name")
+                        next = { start(seasonNum, list, showInfo, i + 1) }
+                    } else if (seasonNum < seasons.last()) {
+                        val ns = runCatching { api.get("/shows/$tmdb/seasons/${seasonNum + 1}") }.getOrNull()
+                        val first = ns?.arr("episodes")?.firstOrNull()
+                        if (first != null) {
+                            label = "S${seasonNum + 1} E${first.long("episode_number")} " + first.str("name")
+                            next = { start(seasonNum + 1, ns.arr("episodes"), ns["show"].obj() ?: showInfo, 0) }
+                        }
+                    }
+                    onPlay(if (next == null) r else r.copy(nextLabel = label, next = next))
                     onStatus("")
                 } catch (e: Exception) {
                     onStatus(e.message ?: "error")
                 }
             }
         }
+        fun playAt(i: Int) = start(season, eps, show, i)
         eps.forEachIndexed { i, ep ->
             val n = ep.long("episode_number")
             val seen = watched?.bool(ep.long("id").toString()) == true
@@ -258,7 +282,7 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, sb: Map<
 
 /** A series download whose episodes TMDB can't place: buttons by file number. */
 @Composable
-private fun SeedboxFiles(s: Settings, api: Api, sb: JsonObject, onPlay: (Int) -> Unit) {
+private fun SeedboxFiles(s: Settings, api: Api, sb: JsonObject, onPlay: (List<JsonObject>, Int) -> Unit) {
     var eps by remember(sb) { mutableStateOf<List<JsonObject>>(emptyList()) }
     LaunchedEffect(sb) {
         eps = runCatching { api.get("/seedbox/${sb.str("hash")}").arr("episodes") }.getOrDefault(emptyList())
@@ -266,10 +290,11 @@ private fun SeedboxFiles(s: Settings, api: Api, sb: JsonObject, onPlay: (Int) ->
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(tr(s.en, "ダウンロード", "Downloaded") + " · ${sb.str("quality")} · ${sb.str("release")}", color = Palette.muted, fontSize = 14.sp)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(eps) { e ->
+            items(eps.size) { i ->
+                val e = eps[i]
                 val n = e.long("number").toInt()
                 val label = if (e.long("file_season") > 0) "S${e.long("file_season")} E$n" else tr(s.en, "第${n}話", "E$n")
-                OutlinedButton(onClick = { onPlay(n) }) { Text("▶ $label") }
+                OutlinedButton(onClick = { onPlay(eps, i) }) { Text("▶ $label") }
             }
         }
     }

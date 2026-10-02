@@ -19,6 +19,8 @@ import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.common.Tracks
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
@@ -82,7 +84,10 @@ class PlayerActivity : ComponentActivity() {
         nextLabel = intent.getStringExtra("nextLabel") ?: ""
         lifecycleScope.launch { api = Api(SettingsStore(applicationContext).settings.first()) }
 
-        player = ExoPlayer.Builder(this).setSeekBackIncrementMs(SEEK_MS).setSeekForwardIncrementMs(SEEK_MS).build()
+        // the platform's decoders first (and passthrough to a receiver); FFmpeg
+        // decodes what neither handles (DTS, TrueHD, …), instead of silence
+        val renderers = DefaultRenderersFactory(this).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+        player = ExoPlayer.Builder(this, renderers).setSeekBackIncrementMs(SEEK_MS).setSeekForwardIncrementMs(SEEK_MS).build()
         view = PlayerView(this).apply {
             this.player = this@PlayerActivity.player
             keepScreenOn = true
@@ -109,6 +114,11 @@ class PlayerActivity : ComponentActivity() {
         player.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) ended()
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                Report.send(this@PlayerActivity, "playback",
+                    "${error.errorCodeName}: ${error.message} · ${title} · ${Uri.parse(url).host} · cause ${error.cause}")
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -298,6 +308,8 @@ class PlayerActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         save()
+        WatchNext.update(this, intent.getStringExtra("path") ?: "", title, intent.getStringExtra("poster") ?: "",
+            player.currentPosition, player.duration, progressPath == "/progress-episode")
         if (player.playbackState != Player.STATE_ENDED) scrobble("stop")
         player.pause()
     }
