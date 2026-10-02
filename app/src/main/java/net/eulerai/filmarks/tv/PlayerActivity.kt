@@ -4,6 +4,7 @@ import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.KeyEvent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -32,6 +33,7 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var player: ExoPlayer
     private var api: Api? = null
     private val tick = Handler(Looper.getMainLooper())
+    private var timeBar: DefaultTimeBar? = null
     private lateinit var progressPath: String
     private lateinit var progressBody: JsonObject
 
@@ -51,7 +53,7 @@ class PlayerActivity : ComponentActivity() {
             setBackgroundColor(Color.BLACK) // letterbox bars
             setShutterBackgroundColor(Color.BLACK)
             // the bar's default step is 1/20 of the film (minutes): 10 s per press, held = continuous
-            findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress)?.setKeyTimeIncrement(SEEK_MS)
+            timeBar = findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress)?.also { it.setKeyTimeIncrement(SEEK_MS) }
         }
         setContentView(view)
         // Back first hides the controls; only with them hidden does it leave the film
@@ -76,6 +78,22 @@ class PlayerActivity : ComponentActivity() {
         tick.post(object : Runnable {
             override fun run() { save(); tick.postDelayed(this, 10_000) }
         })
+    }
+
+    // Holding left/right on the bar speeds up: 10 s steps, then 30 s, 1 min, 2 min
+    // (the remote repeats a held key ~20 times a second).
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN &&
+            (event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT || event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+            val r = event.repeatCount
+            timeBar?.setKeyTimeIncrement(when {
+                r < 10 -> SEEK_MS
+                r < 30 -> 30_000L
+                r < 60 -> 60_000L
+                else -> 120_000L
+            })
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     private fun save() {

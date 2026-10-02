@@ -75,8 +75,10 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit) {
             status = e.message ?: "error"
         }
     }
-    // Real-Debrid for a movie: stored links, else a search (it takes a while).
-    fun playRD(tmdb: Long) = scope.launch {
+    // Real-Debrid for a movie: its stored links (one per quality), after a
+    // search when there are none yet; the viewer picks one.
+    var rdLinks by remember(path) { mutableStateOf<List<JsonObject>?>(null) }
+    fun loadRD(tmdb: Long) = scope.launch {
         try {
             status = tr(s.en, "Real-Debrid を確認中…", "Checking Real-Debrid…")
             var links = api.get("/movies/$tmdb").arr("debrid_links")
@@ -90,14 +92,17 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit) {
                     if (st.str("status") != "resolving") break
                 }
             }
-            val l = links.firstOrNull()
-            if (l == null) {
-                status = tr(s.en, "Real-Debrid に見つかりません", "Not found on Real-Debrid"); return@launch
-            }
+            rdLinks = links
+            status = if (links.isEmpty()) tr(s.en, "Real-Debrid に見つかりません", "Not found on Real-Debrid") else ""
+        } catch (e: Exception) {
+            status = e.message ?: "error"
+        }
+    }
+    fun playRD(tmdb: Long, l: JsonObject) = scope.launch {
+        try {
             val p = api.get("/play/${l.long("id")}")
             onPlay(PlayRequest(p.str("stream_url"), p.str("title").ifEmpty { d.str("title") }, p.long("position_seconds"), "/progress",
                 buildJsonObject { put("movie_id", tmdb); put("link_id", l.long("id")) }))
-            status = ""
         } catch (e: Exception) {
             status = e.message ?: "error"
         }
@@ -138,10 +143,28 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit) {
                         Button(onClick = { playSeedbox(sb.str("hash")) }) { Text("▶ " + tr(s.en, "再生", "Play") + " · ${sb.str("quality")}") }
                     }
                     if (d.str("media") == "movie" && d.long("tmdb_id") > 0) {
-                        OutlinedButton(onClick = { playRD(d.long("tmdb_id")) }) { Text("Real-Debrid") }
+                        OutlinedButton(onClick = { loadRD(d.long("tmdb_id")) }) { Text("Real-Debrid") }
                     }
                 }
                 if (status != "") Text(status, color = Palette.muted, modifier = Modifier.padding(top = 8.dp))
+            }
+            rdLinks?.takeIf { it.isNotEmpty() }?.let { links ->
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Real-Debrid", color = Palette.muted, fontSize = 14.sp)
+                        for (l in links) {
+                            val size = l.long("file_size").takeIf { it > 0 }?.let { "%.1f GB".format(it / 1e9) }
+                            val label = listOfNotNull(l.str("quality").ifEmpty { null }, size,
+                                l.long("seeders").takeIf { it > 0 }?.let { tr(s.en, "シード $it", "$it seeders") }).joinToString(" · ")
+                            OutlinedButton(onClick = { playRD(d.long("tmdb_id"), l) }) {
+                                Column {
+                                    Text("▶ $label")
+                                    Text(l.str("filename").ifEmpty { l.str("torrent_title") }, fontSize = 12.sp, color = Palette.muted, maxLines = 1)
+                                }
+                            }
+                        }
+                    }
+                }
             }
             for (sb in d.arr("seedbox").filter { it.bool("series") }) {
                 item { SeedboxEpisodes(s, api, sb) { n -> playSeedbox(sb.str("hash"), n) } }
