@@ -15,9 +15,10 @@ entered on the TV; nothing secret is in this repo.
    (developer mode), then Settings → Apps → Security → allow
    **Downloader** to install unknown apps.
 2. Install **Downloader** (AFTVnews) from the Play Store.
-3. In Downloader, open
+3. In Downloader, enter the code **4007968** (AFTVnews short code for
+   `https://filmarks.eulerai.net/api/kodi/tv`, which redirects to the
+   latest release APK) and install. The long form also works:
    `https://github.com/hbar137/filmarks-tv/releases/latest/download/filmarks-tv.apk`
-   and install.
 
 ## Build
 
