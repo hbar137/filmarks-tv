@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -44,6 +45,12 @@ class PlayerActivity : ComponentActivity() {
         player = ExoPlayer.Builder(this).build()
         val view = PlayerView(this).apply { this.player = this@PlayerActivity.player; keepScreenOn = true }
         setContentView(view)
+        // Back first hides the controls; only with them hidden does it leave the film
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (view.isControllerFullyVisible) view.hideController() else finish()
+            }
+        })
         player.setMediaItem(MediaItem.Builder().setUri(url)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build())
         if (start > 60) {
