@@ -29,15 +29,42 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
+import java.net.URLEncoder
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** What the player needs: the stream, where to resume, and where to save progress. */
-data class PlayRequest(val url: String, val title: String, val startSec: Long, val progressPath: String, val progressBody: JsonObject)
+/** An online subtitle the player can switch to (WebVTT from the server). */
+data class Sub(val url: String, val lang: String, val label: String)
+
+/** What the player needs: the stream, where to resume, where to save progress, and online subtitles. */
+data class PlayRequest(val url: String, val title: String, val startSec: Long, val progressPath: String,
+                       val progressBody: JsonObject, val subs: List<Sub> = emptyList())
+
+/**
+ * Online subtitles (OpenSubtitles / SubDL through the server) in Japanese and
+ * English, at most 4 each; given up on after 8 s so playback never waits long.
+ */
+suspend fun onlineSubs(s: Settings, api: Api, listPath: String): List<Sub> = withTimeoutOrNull(8000) {
+    runCatching {
+        api.get(listPath, "languages" to "ja,en").arr("items").groupBy { it.str("language").lowercase() }
+            .flatMap { (_, l) -> l.take(4) }
+            .mapNotNull { r ->
+                val id = r.str("file_id").ifEmpty { return@mapNotNull null }
+                val source = r.str("source").ifEmpty { "opensubtitles" }
+                val lang = r.str("language").lowercase()
+                val name = r.str("file_name").ifEmpty { r.str("release") }.ifEmpty { lang }
+                val url = s.server + "/api/kodi/subtitle-file/" + source + "/" + URLEncoder.encode(id, "UTF-8").replace("+", "%20") +
+                    "/sub.vtt?p=" + URLEncoder.encode(s.password, "UTF-8")
+                Sub(url, lang, "$lang · $name")
+            }
+    }.getOrDefault(emptyList())
+} ?: emptyList()
 
 /** A title page: details, then what can be played (seedbox files, Real-Debrid). */
 @Composable
@@ -64,12 +91,17 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit) {
         status = tr(s.en, "準備中…", "Starting…")
         try {
             val p = if (n > 0) api.get("/play-seedbox/$hash", "n" to n) else api.get("/play-seedbox/$hash")
+            val subs = when {
+                n > 0 && p.long("episode_id") > 0 -> onlineSubs(s, api, "/episode-subtitles/${p.long("episode_id")}")
+                n == 0 && p.long("movie_id") > 0 -> onlineSubs(s, api, "/subtitles/${p.long("movie_id")}")
+                else -> emptyList()
+            }
             val body = if (n > 0) buildJsonObject {
                 put("episode_id", p.long("episode_id")); put("show_id", p.long("show_id")); put("link_id", 0)
                 put("seedbox", hash); put("number", n)
             } else buildJsonObject { put("movie_id", p.long("movie_id")); put("link_id", 0); put("seedbox", hash) }
             val title = if (n > 0) "${p.str("show_title")} · " + tr(s.en, "第${n}話", "E$n") else p.str("title").ifEmpty { d.str("title") }
-            onPlay(PlayRequest(p.str("stream_url"), title, p.long("position_seconds"), if (n > 0) "/progress-episode" else "/progress", body))
+            onPlay(PlayRequest(p.str("stream_url"), title, p.long("position_seconds"), if (n > 0) "/progress-episode" else "/progress", body, subs))
             status = ""
         } catch (e: Exception) {
             status = e.message ?: "error"
@@ -100,9 +132,12 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit) {
     }
     fun playRD(tmdb: Long, l: JsonObject) = scope.launch {
         try {
+            status = tr(s.en, "準備中…", "Starting…")
+            val subs = async { onlineSubs(s, api, "/subtitles/$tmdb") }
             val p = api.get("/play/${l.long("id")}")
             onPlay(PlayRequest(p.str("stream_url"), p.str("title").ifEmpty { d.str("title") }, p.long("position_seconds"), "/progress",
-                buildJsonObject { put("movie_id", tmdb); put("link_id", l.long("id")) }))
+                buildJsonObject { put("movie_id", tmdb); put("link_id", l.long("id")) }, subs.await()))
+            status = ""
         } catch (e: Exception) {
             status = e.message ?: "error"
         }

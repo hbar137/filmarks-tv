@@ -43,6 +43,9 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -61,11 +64,14 @@ class MainActivity : ComponentActivity() {
     fun play(r: PlayRequest) {
         startActivity(Intent(this, PlayerActivity::class.java)
             .putExtra("url", r.url).putExtra("title", r.title).putExtra("start", r.startSec)
-            .putExtra("progressPath", r.progressPath).putExtra("progressBody", r.progressBody.toString()))
+            .putExtra("progressPath", r.progressPath).putExtra("progressBody", r.progressBody.toString())
+            .putExtra("subs", JsonArray(r.subs.map { JsonObject(mapOf("url" to JsonPrimitive(it.url), "lang" to JsonPrimitive(it.lang), "label" to JsonPrimitive(it.label))) }).toString()))
     }
 }
 
-/** Home → title pages, as a stack the remote's Back pops. */
+private const val DOWNLOADS = "downloads"
+
+/** Home → Downloads / title pages, as a stack the remote's Back pops. */
 @Composable
 private fun App(s: Settings, store: SettingsStore) {
     val scope = rememberCoroutineScope()
@@ -78,10 +84,11 @@ private fun App(s: Settings, store: SettingsStore) {
     }
     when {
         editing -> SetupScreen(s) { scope.launch { store.save(it); editing = false } }
+        stack.lastOrNull() == DOWNLOADS -> DownloadsScreen(s) { stack = stack + it }
         stack.isNotEmpty() -> TitleScreen(s, stack.last()) { activity.play(it) }
         else -> HomeScreen(s, kind, onKind = { kind = it },
             onLang = { scope.launch { store.save(s.copy(lang = if (s.en) "ja" else "en")) } },
-            onSettings = { editing = true }, onOpen = { stack = stack + it })
+            onSettings = { editing = true }, onDownloads = { stack = stack + DOWNLOADS }, onOpen = { stack = stack + it })
     }
 }
 

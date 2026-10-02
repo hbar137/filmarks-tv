@@ -41,7 +41,8 @@ data class HomeRow(val title: String, val cards: List<JsonObject>)
 
 /** Poster rows, as the website's home: Downloads first, then Filmarks' / TMDB rows. */
 @Composable
-fun HomeScreen(s: Settings, kind: String, onKind: (String) -> Unit, onLang: () -> Unit, onSettings: () -> Unit, onOpen: (String) -> Unit) {
+fun HomeScreen(s: Settings, kind: String, onKind: (String) -> Unit, onLang: () -> Unit, onSettings: () -> Unit,
+               onDownloads: () -> Unit, onOpen: (String) -> Unit) {
     var rows by remember(s, kind) { mutableStateOf<List<HomeRow>?>(null) }
     var error by remember(s, kind) { mutableStateOf("") }
     LaunchedEffect(s, kind) {
@@ -61,6 +62,7 @@ fun HomeScreen(s: Settings, kind: String, onKind: (String) -> Unit, onLang: () -
                 FilterChip(selected = kind == k, onClick = { onKind(k) }) { Text(label) }
             }
             Box(Modifier.weight(1f))
+            OutlinedButton(onClick = onDownloads) { Text(tr(s.en, "ダウンロード", "Downloads")) }
             OutlinedButton(onClick = onLang) { Text(if (s.en) "日本語" else "English") }
             OutlinedButton(onClick = onSettings) { Text(tr(s.en, "設定", "Settings")) }
         }

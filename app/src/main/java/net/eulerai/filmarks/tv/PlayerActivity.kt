@@ -11,6 +11,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.DefaultTimeBar
@@ -20,6 +21,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import android.net.Uri
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -52,6 +55,7 @@ class PlayerActivity : ComponentActivity() {
             keepScreenOn = true
             setBackgroundColor(Color.BLACK) // letterbox bars
             setShutterBackgroundColor(Color.BLACK)
+            setShowSubtitleButton(true) // hidden by default: the file's own subtitles and the online ones
             // the bar's default step is 1/20 of the film (minutes): 10 s per press, held = continuous
             timeBar = findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress)?.also { it.setKeyTimeIncrement(SEEK_MS) }
         }
@@ -62,7 +66,13 @@ class PlayerActivity : ComponentActivity() {
                 if (view.isControllerFullyVisible) view.hideController() else finish()
             }
         })
-        player.setMediaItem(MediaItem.Builder().setUri(url)
+        val subs = (Api.json.parseToJsonElement(intent.getStringExtra("subs") ?: "[]") as? JsonArray).orEmpty()
+            .mapNotNull { it as? JsonObject }
+            .map {
+                MediaItem.SubtitleConfiguration.Builder(Uri.parse(it.str("url")))
+                    .setMimeType(MimeTypes.TEXT_VTT).setLanguage(it.str("lang")).setLabel(it.str("label")).build()
+            }
+        player.setMediaItem(MediaItem.Builder().setUri(url).setSubtitleConfigurations(subs)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build())
         if (start > 60) {
             player.seekTo(start * 1000)
