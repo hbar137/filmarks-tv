@@ -21,6 +21,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -124,6 +126,7 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen
                 }
                 if (status != "") Text(status, color = Palette.muted, modifier = Modifier.padding(top = 8.dp))
             }
+            item { AvistazSection(s, api, d.str("avistaz_path")) }
             rdLinks?.takeIf { it.isNotEmpty() }?.let { links ->
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -160,7 +163,7 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen
                 PosterRowOf(s, HomeRow(tr(s.en, "似ている作品", "More like this"), similar), onOpen)
             }
             item { ReviewsSection(s, api, path) }
-            item { AvistazSection(s, api, path) }
+
         }
     }
 }
@@ -295,9 +298,11 @@ private fun OtherReleases(s: Settings, api: Api, tmdb: Long, onStatus: (String) 
         }) { Text(tr(s.en, "他のリリース…", "Other releases…")) }
         return
     }
-    for (c in cands!!) {
+    val first = remember(tmdb) { FocusRequester() }
+    LaunchedEffect(cands) { if (cands.orEmpty().isNotEmpty()) runCatching { first.requestFocus() } }
+    cands!!.forEachIndexed { i, c ->
         val label = listOf(c.str("quality"), "%.1f GB".format(c.long("size_bytes") / 1e9), tr(s.en, "シード ", "seeds ") + c.long("seeders")).joinToString(" · ")
-        OutlinedButton(onClick = {
+        OutlinedButton(modifier = if (i == 0) Modifier.focusRequester(first) else Modifier, onClick = {
             onStatus(tr(s.en, "Real-Debrid で準備中…", "Getting it from Real-Debrid…"))
             scope.launch {
                 try {
