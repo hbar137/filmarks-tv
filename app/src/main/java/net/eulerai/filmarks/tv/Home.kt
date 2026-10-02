@@ -2,6 +2,7 @@
 
 package net.eulerai.filmarks.tv
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,10 +41,16 @@ import kotlinx.serialization.json.JsonObject
 
 data class HomeRow(val title: String, val cards: List<JsonObject>)
 
+// pages opened from the home's top bar (anything else on the stack is a title path)
+const val PAGE_SEARCH = "page:search"
+const val PAGE_WATCHLIST = "page:watchlist"
+const val PAGE_HISTORY = "page:history"
+const val PAGE_DOWNLOADS = "page:downloads"
+
 /** Poster rows, as the website's home: Downloads first, then Filmarks' / TMDB rows. */
 @Composable
 fun HomeScreen(s: Settings, kind: String, onKind: (String) -> Unit, onLang: () -> Unit, onSettings: () -> Unit,
-               onDownloads: () -> Unit, onOpen: (String) -> Unit) {
+               onPage: (String) -> Unit, onOpen: (String) -> Unit, update: String = "", onUpdate: () -> Unit = {}) {
     var rows by remember(s, kind) { mutableStateOf<List<HomeRow>?>(null) }
     var error by remember(s, kind) { mutableStateOf("") }
     LaunchedEffect(s, kind) {
@@ -54,30 +62,34 @@ fun HomeScreen(s: Settings, kind: String, onKind: (String) -> Unit, onLang: () -
         }
     }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.padding(start = 48.dp, end = 48.dp, top = 24.dp, bottom = 8.dp),
+        Row(Modifier.horizontalScroll(rememberScrollState()).padding(start = 48.dp, end = 48.dp, top = 24.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("FILMARKS ", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Palette.text)
             Text("ARCHIVE", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Palette.gold, modifier = Modifier.padding(end = 24.dp))
             for ((k, label) in listOf("movie" to tr(s.en, "映画", "Movies"), "drama" to tr(s.en, "ドラマ", "Shows"), "anime" to tr(s.en, "アニメ", "Anime"))) {
                 FilterChip(selected = kind == k, onClick = { onKind(k) }) { Text(label) }
             }
-            Box(Modifier.weight(1f))
-            OutlinedButton(onClick = onDownloads) { Text(tr(s.en, "ダウンロード", "Downloads")) }
+            Box(Modifier.width(24.dp))
+            OutlinedButton(onClick = { onPage(PAGE_SEARCH) }) { Text(tr(s.en, "検索", "Search")) }
+            OutlinedButton(onClick = { onPage(PAGE_WATCHLIST) }) { Text(tr(s.en, "ウォッチリスト", "Watchlist")) }
+            OutlinedButton(onClick = { onPage(PAGE_HISTORY) }) { Text(tr(s.en, "履歴", "History")) }
+            OutlinedButton(onClick = { onPage(PAGE_DOWNLOADS) }) { Text(tr(s.en, "ダウンロード", "Downloads")) }
             OutlinedButton(onClick = onLang) { Text(if (s.en) "日本語" else "English") }
             OutlinedButton(onClick = onSettings) { Text(tr(s.en, "設定", "Settings")) }
+            if (update != "") androidx.tv.material3.Button(onClick = onUpdate) { Text(tr(s.en, "更新 $update", "Update $update")) }
         }
         when {
             error != "" -> Text(error, color = Palette.red, modifier = Modifier.padding(48.dp))
             rows == null -> Text(tr(s.en, "読み込み中…", "Loading…"), color = Palette.muted, modifier = Modifier.padding(48.dp))
             else -> LazyColumn(contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                items(rows!!) { row -> PosterRow(s, row, onOpen) }
+                items(rows!!) { row -> PosterRowOf(s, row, onOpen) }
             }
         }
     }
 }
 
 @Composable
-private fun PosterRow(s: Settings, row: HomeRow, onOpen: (String) -> Unit) {
+fun PosterRowOf(s: Settings, row: HomeRow, onOpen: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(row.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Palette.text, modifier = Modifier.padding(start = 48.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {

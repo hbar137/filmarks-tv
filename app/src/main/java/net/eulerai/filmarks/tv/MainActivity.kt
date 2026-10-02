@@ -2,6 +2,7 @@ package net.eulerai.filmarks.tv
 
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
@@ -82,9 +83,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private const val DOWNLOADS = "downloads"
-
-/** Home → Downloads / title pages, as a stack the remote's Back pops. */
+/** Home → pages and title pages, as a stack the remote's Back pops. */
 @Composable
 private fun App(s: Settings, store: SettingsStore) {
     val scope = rememberCoroutineScope()
@@ -92,16 +91,30 @@ private fun App(s: Settings, store: SettingsStore) {
     var editing by remember { mutableStateOf(!s.ready) }
     var kind by remember { mutableStateOf("movie") }
     var stack by remember { mutableStateOf(listOf<String>()) }
+    var update by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { update = Update.check() }
     BackHandler(enabled = editing && s.ready || stack.isNotEmpty()) {
         if (editing) editing = false else stack = stack.dropLast(1)
     }
-    when {
-        editing -> SetupScreen(s) { scope.launch { store.save(it); editing = false } }
-        stack.lastOrNull() == DOWNLOADS -> DownloadsScreen(s) { stack = stack + it }
-        stack.isNotEmpty() -> TitleScreen(s, stack.last()) { activity.play(it, s.en) }
-        else -> HomeScreen(s, kind, onKind = { kind = it },
-            onLang = { scope.launch { store.save(s.copy(lang = if (s.en) "ja" else "en")) } },
-            onSettings = { editing = true }, onDownloads = { stack = stack + DOWNLOADS }, onOpen = { stack = stack + it })
+    val open: (String) -> Unit = { if (it != "") stack = stack + it }
+    when (val top = stack.lastOrNull()) {
+        null -> if (editing) SetupScreen(s) { scope.launch { store.save(it); editing = false } }
+            else HomeScreen(s, kind, onKind = { kind = it },
+                onLang = { scope.launch { store.save(s.copy(lang = if (s.en) "ja" else "en")) } },
+                onSettings = { editing = true }, onPage = open, onOpen = open,
+                update = update, onUpdate = {
+                    scope.launch {
+                        Toast.makeText(activity, tr(s.en, "ダウンロード中…", "Downloading…"), Toast.LENGTH_SHORT).show()
+                        runCatching { Update.install(activity) }.onFailure {
+                            Toast.makeText(activity, it.message ?: "update failed", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                })
+        PAGE_DOWNLOADS -> DownloadsScreen(s, open)
+        PAGE_SEARCH -> SearchScreen(s, kind, open)
+        PAGE_WATCHLIST -> ListScreen(s, "watchlist", open)
+        PAGE_HISTORY -> ListScreen(s, "history", open)
+        else -> TitleScreen(s, top) { activity.play(it, s.en) }
     }
 }
 
