@@ -58,6 +58,8 @@ class PlayerActivity : ComponentActivity() {
     private var introStart = -1.0
     private var introEnd = -1.0
     private var nextLabel = ""
+    private var outroStart = -1.0
+    private lateinit var nextBtn: Button
     private lateinit var skip: Button
     private lateinit var nextBox: LinearLayout
     private lateinit var nextText: TextView
@@ -82,6 +84,7 @@ class PlayerActivity : ComponentActivity() {
         introStart = intent.getDoubleExtra("introStart", -1.0)
         introEnd = intent.getDoubleExtra("introEnd", -1.0)
         nextLabel = intent.getStringExtra("nextLabel") ?: ""
+        outroStart = intent.getDoubleExtra("outroStart", -1.0)
         lifecycleScope.launch { api = Api(SettingsStore(applicationContext).settings.first()) }
 
         // the platform's decoders first (and passthrough to a receiver); FFmpeg
@@ -145,6 +148,7 @@ class PlayerActivity : ComponentActivity() {
             override fun run() {
                 if (n++ % 20 == 0) save()
                 updateSkip()
+                updateNext()
                 tick.postDelayed(this, 500)
             }
         })
@@ -184,6 +188,12 @@ class PlayerActivity : ComponentActivity() {
             setOnClickListener { player.seekTo((introEnd * 1000).toLong()); visibility = View.GONE }
         }
         root.addView(skip, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, 64, 140) })
+        nextBtn = Button(this).apply {
+            text = tr(en, "次のエピソード ▶", "Next episode ▶")
+            visibility = View.GONE
+            setOnClickListener { save(); scrobble("stop"); playNext() }
+        }
+        root.addView(nextBtn, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, 64, 140) })
         nextText = TextView(this).apply { setTextColor(Color.WHITE); textSize = 22f }
         val now = Button(this).apply {
             text = tr(en, "今すぐ再生", "Play now")
@@ -228,6 +238,21 @@ class PlayerActivity : ComponentActivity() {
             .show()
     }
 
+    private fun updateNext() {
+        if (nextLabel == "" || countdown >= 0) return
+        val dur = player.duration
+        if (dur <= 0) return
+        val pos = player.currentPosition
+        val from = if (outroStart > 0) (outroStart * 1000).toLong() else dur - 120_000
+        val show = pos >= from && pos < dur
+        if (show && nextBtn.visibility != View.VISIBLE) {
+            nextBtn.visibility = View.VISIBLE
+            nextBtn.requestFocus()
+        } else if (!show && nextBtn.visibility == View.VISIBLE) {
+            nextBtn.visibility = View.GONE
+        }
+    }
+
     private fun updateSkip() {
         if (introEnd <= 0) return
         val pos = player.currentPosition / 1000.0
@@ -244,6 +269,7 @@ class PlayerActivity : ComponentActivity() {
         save()
         scrobble("stop")
         if (nextLabel == "") return finish()
+        nextBtn.visibility = View.GONE
         countdown = 8
         nextBox.visibility = View.VISIBLE
         nextBox.getChildAt(1).requestFocus()

@@ -28,6 +28,7 @@ data class PlayRequest(
     val scrobbleBody: JsonObject? = null,
     val introStart: Double = -1.0,
     val introEnd: Double = -1.0,
+    val outroStart: Double = -1.0, // an anime's ending credits (aniskip): the next-episode button shows from here
     val nextLabel: String = "",
     val next: (() -> Unit)? = null,
     val audioLang: String = "", // the title's original language: its audio track is chosen first
@@ -120,9 +121,9 @@ class Plays(private val s: Settings, private val api: Api) {
     suspend fun episode(show: JsonObject, ep: JsonObject, sb: Pair<String, Int>?, status: (String) -> Unit): PlayRequest = coroutineScope {
         val epid = ep.long("id")
         val n = ep.long("episode_number").toInt()
-        val intro = async {
+        val skip = async {
             if (!show.bool("is_anime")) null
-            else withTimeoutOrNull(5000) { runCatching { api.get("/aniskip/${show.long("id")}/$n")["intro"].obj() }.getOrNull() }
+            else withTimeoutOrNull(5000) { runCatching { api.get("/aniskip/${show.long("id")}/$n") }.getOrNull() }
         }
         val r = if (sb != null) {
             seedbox(sb.first, sb.second, show.str("title"))
@@ -148,7 +149,12 @@ class Plays(private val s: Settings, private val api: Api) {
                 buildJsonObject { put("episode_id", epid); put("show_id", p.long("show_id")); put("link_id", epid) },
                 subs.await(), "/scrobble-episode", episodeScrobble(p))
         }
-        val i = intro.await()
-        if (i != null && i.dbl("end") > 0) r.copy(introStart = i.dbl("start"), introEnd = i.dbl("end")) else r
+        val sk = skip.await()
+        val intro = sk?.get("intro").obj()
+        val outro = sk?.get("outro").obj()
+        var out = r
+        if (intro != null && intro.dbl("end") > 0) out = out.copy(introStart = intro.dbl("start"), introEnd = intro.dbl("end"))
+        if (outro != null && outro.dbl("start") > 0) out = out.copy(outroStart = outro.dbl("start"))
+        out
     }
 }

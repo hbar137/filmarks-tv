@@ -94,7 +94,7 @@ class MainActivity : ComponentActivity() {
             .putExtra("progressPath", r.progressPath).putExtra("progressBody", r.progressBody.toString())
             .putExtra("subs", JsonArray(r.subs.map { JsonObject(mapOf("url" to JsonPrimitive(it.url), "lang" to JsonPrimitive(it.lang), "label" to JsonPrimitive(it.label))) }).toString())
             .putExtra("scrobblePath", r.scrobblePath).putExtra("scrobbleBody", r.scrobbleBody?.toString())
-            .putExtra("introStart", r.introStart).putExtra("introEnd", r.introEnd)
+            .putExtra("introStart", r.introStart).putExtra("introEnd", r.introEnd).putExtra("outroStart", r.outroStart)
             .putExtra("nextLabel", if (r.next != null) r.nextLabel else "")
             .putExtra("audioLang", r.audioLang).putExtra("path", r.path).putExtra("poster", r.poster))
     }
