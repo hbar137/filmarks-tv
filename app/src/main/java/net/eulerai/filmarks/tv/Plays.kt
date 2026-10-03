@@ -66,8 +66,8 @@ class Plays(private val s: Settings, val api: Api) {
         if (imdb == "") null else buildJsonObject { put("imdb_id", imdb) }
 
     /** A seedbox file: a movie (n = 0), or episode n of a series download. */
-    suspend fun seedbox(hash: String, n: Int, fallbackTitle: String): PlayRequest = coroutineScope {
-        val p = if (n > 0) api.get("/play-seedbox/$hash", "n" to n) else api.get("/play-seedbox/$hash")
+    suspend fun seedbox(hash: String, n: Int, fallbackTitle: String, fileSeason: Int = 0): PlayRequest = coroutineScope {
+        val p = if (n > 0) api.get("/play-seedbox/$hash", "n" to n, "fs" to fileSeason.takeIf { it > 0 }) else api.get("/play-seedbox/$hash")
         if (n > 0) {
             val epid = p.long("episode_id")
             val subs = async { if (epid > 0) subs("/episode-subtitles/$epid") else emptyList() }
@@ -121,7 +121,7 @@ class Plays(private val s: Settings, val api: Api) {
      * number), else Real-Debrid (searching first when needed). Anime get
      * their intro from aniskip.
      */
-    suspend fun episode(show: JsonObject, ep: JsonObject, sb: Pair<String, Int>?, status: (String) -> Unit): PlayRequest = coroutineScope {
+    suspend fun episode(show: JsonObject, ep: JsonObject, sb: JsonObject?, status: (String) -> Unit): PlayRequest = coroutineScope {
         val epid = ep.long("id")
         val n = ep.long("episode_number").toInt()
         val skip = async {
@@ -129,7 +129,7 @@ class Plays(private val s: Settings, val api: Api) {
             else withTimeoutOrNull(5000) { runCatching { api.get("/aniskip/${show.long("id")}/$n") }.getOrNull() }
         }
         val r = if (sb != null) {
-            seedbox(sb.first, sb.second, show.str("title"))
+            seedbox(sb.str("hash"), sb.long("number").toInt(), show.str("title"), sb.long("file_season").toInt())
         } else {
             val st = api.get("/realdebrid/resolve-episode-status/$epid")
             if (st.arr("links").isEmpty()) {
@@ -170,11 +170,11 @@ class Plays(private val s: Settings, val api: Api) {
 // (a download TMDB can't place).
 
 fun tmdbChain(tmdb: Long, season: Int, lastSeason: Int, show: JsonObject, episodes: List<JsonObject>, index: Int,
-              sb: Map<Long, Pair<String, Int>>): JsonObject = JsonObject(mapOf(
+              sb: JsonObject): JsonObject = JsonObject(mapOf(
     "type" to JsonPrimitive("tmdb"), "tmdb" to JsonPrimitive(tmdb), "season" to JsonPrimitive(season),
     "last_season" to JsonPrimitive(lastSeason), "show" to show, "episodes" to JsonArray(episodes),
     "index" to JsonPrimitive(index),
-    "sb" to JsonObject(sb.map { (k, v) -> k.toString() to JsonArray(listOf(JsonPrimitive(v.first), JsonPrimitive(v.second))) }.toMap()),
+    "sb" to sb, // episode id -> {hash, number, file_season} (the season endpoint's "seedbox")
 ))
 
 fun filesChain(hash: String, title: String, files: List<JsonObject>, index: Int): JsonObject = JsonObject(mapOf(
@@ -184,10 +184,7 @@ fun filesChain(hash: String, title: String, files: List<JsonObject>, index: Int)
 
 private fun JsonObject.with(vararg kv: Pair<String, kotlinx.serialization.json.JsonElement>) = JsonObject(this + kv.toMap())
 
-private fun sbOf(chain: JsonObject, epid: Long): Pair<String, Int>? =
-    (chain["sb"].obj()?.get(epid.toString()) as? JsonArray)?.let {
-        (it[0] as JsonPrimitive).content to (it[1] as JsonPrimitive).content.toInt()
-    }
+private fun sbOf(chain: JsonObject, epid: Long): JsonObject? = chain["sb"].obj()?.get(epid.toString()).obj()
 
 /** The next episode's label ("E5 Title", "S2 E1 …"), "" when none is known. */
 fun nextLabel(en: Boolean, chain: JsonObject?): String {
@@ -216,8 +213,11 @@ suspend fun Plays.next(chain: JsonObject, status: (String) -> Unit = {}): PlayRe
             val ns = api.get("/shows/${chain.long("tmdb")}/seasons/${season + 1}")
             val first = ns.arr("episodes").firstOrNull() ?: return null
             val show2 = ns["show"].obj() ?: show
-            return episode(show2, first, sbOf(chain, first.long("id")), status).copy(chain = chain.with(
-                "season" to JsonPrimitive(season + 1), "show" to show2, "episodes" to JsonArray(ns.arr("episodes")), "index" to JsonPrimitive(0)))
+            // the new season's downloaded files (a multi-season download lists them per season)
+            val sb2 = ns["seedbox"].obj() ?: JsonObject(emptyMap())
+            return episode(show2, first, sb2[first.long("id").toString()].obj(), status).copy(chain = chain.with(
+                "season" to JsonPrimitive(season + 1), "show" to show2, "episodes" to JsonArray(ns.arr("episodes")),
+                "index" to JsonPrimitive(0), "sb" to sb2))
         }
         "files" -> {
             val f = chain.arr("files").getOrNull(i + 1) ?: return null

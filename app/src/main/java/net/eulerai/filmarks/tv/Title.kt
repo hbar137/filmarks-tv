@@ -48,8 +48,6 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen
     var watched by remember(path) { mutableStateOf(false) }
     var listed by remember(path) { mutableStateOf(false) }
     var rdLinks by remember(path) { mutableStateOf<List<JsonObject>?>(null) }
-    // a series' episode files on the seedbox: episode id -> (hash, number)
-    var sbEpisodes by remember(path) { mutableStateOf<Map<Long, Pair<String, Int>>>(emptyMap()) }
     var sbUnmatched by remember(path) { mutableStateOf<List<JsonObject>>(emptyList()) }
     val scope = rememberCoroutineScope()
     val api = remember(s) { Api(s) }
@@ -60,17 +58,13 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen
             watched = d.bool("watched")
             listed = d.bool("watchlisted")
             t = d
-            val map = mutableMapOf<Long, Pair<String, Int>>()
+            // series downloads TMDB can't place (no episode ids): listed by file number
+            // below; the rest show in the season's episode list (the season endpoint maps them)
             val unmatched = mutableListOf<JsonObject>()
             for (sb in d.arr("seedbox").filter { it.bool("series") }) {
                 val files = runCatching { api.get("/seedbox/${sb.str("hash")}").arr("episodes") }.getOrDefault(emptyList())
-                if (files.any { it.long("episode_id") > 0 }) {
-                    for (f in files) if (f.long("episode_id") > 0) map[f.long("episode_id")] = sb.str("hash") to f.long("number").toInt()
-                } else {
-                    unmatched += sb
-                }
+                if (files.none { it.long("episode_id") > 0 }) unmatched += sb
             }
-            sbEpisodes = map
             sbUnmatched = unmatched
         } catch (e: Exception) {
             error = e.message ?: e.javaClass.simpleName
@@ -151,7 +145,7 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen
             }
             if (!isMovie && tmdb > 0) {
                 item {
-                    Seasons(s, api, plays, d, sbEpisodes, returns, onStatus = { status = it },
+                    Seasons(s, api, plays, d, returns, onStatus = { status = it },
                         onPlay = { onPlay(it.copy(audioLang = d.str("lang"), path = path, poster = d.str("poster"))) })
                 }
             }
@@ -202,12 +196,15 @@ private fun Header(s: Settings, d: JsonObject) {
  * else through Real-Debrid.
  */
 @Composable
-private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, sb: Map<Long, Pair<String, Int>>, returns: Int,
+private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, returns: Int,
                     onStatus: (String) -> Unit, onPlay: (PlayRequest) -> Unit) {
     val tmdb = d.long("tmdb_id")
     // a Filmarks season page is one TMDB season; an English show page has all of them
     val seasons = if (d.long("season_number") > 0) listOf(d.long("season_number").toInt())
                   else (1..maxOf(1, d.long("seasons").toInt())).toList()
+    // where the next episode may run on to: the show's last season (a
+    // Japanese page shows one season, but the run continues past it)
+    val lastSeason = maxOf(seasons.last(), d.long("seasons").toInt())
     var season by remember(tmdb) { mutableStateOf(seasons.first()) }
     var data by remember(tmdb, season) { mutableStateOf<JsonObject?>(null) }
     val scope = rememberCoroutineScope()
@@ -237,6 +234,8 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, sb: Map<
         val eps = sd.arr("episodes")
         val watched = sd["watched"].obj()
         val show = sd["show"].obj() ?: JsonObject(emptyMap())
+        // this season's episodes on the seedbox: id -> {hash, number, file_season}
+        val files = sd["seedbox"].obj() ?: JsonObject(emptyMap())
         // plays episode i of a season's list; the next is the following episode,
         // or the next season's first (fetched when this is the season's last)
         fun start(seasonNum: Int, list: List<JsonObject>, showInfo: JsonObject, i: Int) {
@@ -244,8 +243,8 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, sb: Map<
             onStatus(tr(s.en, "準備中…", "Starting…"))
             scope.launch {
                 try {
-                    val r = plays.episode(showInfo, ep, sb[ep.long("id")], onStatus)
-                    onPlay(r.copy(chain = tmdbChain(tmdb, seasonNum, seasons.last(), showInfo, list, i, sb)))
+                    val r = plays.episode(showInfo, ep, files[ep.long("id").toString()].obj(), onStatus)
+                    onPlay(r.copy(chain = tmdbChain(tmdb, seasonNum, lastSeason, showInfo, list, i, files)))
                     onStatus("")
                 } catch (e: Exception) {
                     onStatus(e.message ?: "error")
@@ -256,7 +255,7 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, sb: Map<
         eps.forEachIndexed { i, ep ->
             val n = ep.long("episode_number")
             val seen = watched?.bool(ep.long("id").toString()) == true
-            val src = if (sb.containsKey(ep.long("id"))) tr(s.en, "ダウンロード済み", "downloaded") else ""
+            val src = if (files.containsKey(ep.long("id").toString())) tr(s.en, "ダウンロード済み", "downloaded") else ""
             OutlinedButton(onClick = { playAt(i) }, modifier = Modifier.width(1100.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(if (seen) "✓" else "▶", color = if (seen) Palette.gold else Palette.text, modifier = Modifier.width(24.dp))
