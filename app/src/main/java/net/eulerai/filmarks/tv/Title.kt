@@ -1,5 +1,8 @@
 package net.eulerai.filmarks.tv
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -258,7 +261,17 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, returns:
             val src = if (files.containsKey(ep.long("id").toString())) tr(s.en, "ダウンロード済み", "downloaded") else ""
             OutlinedButton(onClick = { playAt(i) }, modifier = Modifier.width(1100.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(if (seen) "✓" else "▶", color = if (seen) Palette.gold else Palette.text, modifier = Modifier.width(24.dp))
+                    // watched: a dark ✓ on a gold disc, readable on the row both
+                    // unselected (dark) and selected (light); unwatched: ▶ in the row's colour
+                    Box(Modifier.width(24.dp), contentAlignment = Alignment.Center) {
+                        if (seen) {
+                            Box(Modifier.size(20.dp).background(Palette.gold, CircleShape), contentAlignment = Alignment.Center) {
+                                Text("✓", color = Color(0xFF111111), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            Text("▶")
+                        }
+                    }
                     Text("E$n", fontWeight = FontWeight.Bold, modifier = Modifier.width(56.dp))
                     Text(ep.str("name"), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(640.dp))
                     Text(listOf(ep.str("air_date"), src).filter { it != "" }.joinToString(" · "), color = Palette.muted, fontSize = 13.sp)
