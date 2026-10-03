@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -81,7 +82,10 @@ class MainActivity : ComponentActivity() {
 
     // the next episode to play when the player reports its episode ended
     private var pendingNext: (() -> Unit)? = null
+    // counts returns from the player: title pages reload their ✓ marks
+    val playerReturns = mutableIntStateOf(0)
     private val playerResult = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        playerReturns.intValue++
         val next = pendingNext
         pendingNext = null
         if (res.resultCode == RESULT_OK && res.data?.getBooleanExtra("playNext", false) == true) next?.invoke()
@@ -147,7 +151,7 @@ private fun App(s: Settings, store: SettingsStore, deepLink: MutableState<String
         PAGE_HISTORY -> ListScreen(s, "history", open)
         PAGE_BROWSE -> BrowseScreen(s, kind, open)
         else -> if (top.startsWith("/people/") || top.startsWith("/en/person/")) PersonScreen(s, top, open)
-                else TitleScreen(s, top, { activity.play(it, s.en) }, open)
+                else TitleScreen(s, top, { activity.play(it, s.en) }, open, activity.playerReturns.intValue)
     }
 }
 

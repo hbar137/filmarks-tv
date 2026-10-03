@@ -33,6 +33,7 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -40,7 +41,7 @@ import kotlinx.serialization.json.put
 
 /** A title page: details, your marks, what can be played, and a series' episodes. */
 @Composable
-fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen: (String) -> Unit = {}) {
+fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen: (String) -> Unit = {}, returns: Int = 0) {
     var t by remember(path) { mutableStateOf<JsonObject?>(null) }
     var error by remember(path) { mutableStateOf("") }
     var status by remember(path) { mutableStateOf("") }
@@ -154,7 +155,7 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen
             }
             if (!isMovie && tmdb > 0) {
                 item {
-                    Seasons(s, api, plays, d, sbEpisodes, onStatus = { status = it },
+                    Seasons(s, api, plays, d, sbEpisodes, returns, onStatus = { status = it },
                         onPlay = { onPlay(it.copy(audioLang = d.str("lang"), path = path, poster = d.str("poster"))) })
                 }
             }
@@ -205,7 +206,7 @@ private fun Header(s: Settings, d: JsonObject) {
  * else through Real-Debrid.
  */
 @Composable
-private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, sb: Map<Long, Pair<String, Int>>,
+private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, sb: Map<Long, Pair<String, Int>>, returns: Int,
                     onStatus: (String) -> Unit, onPlay: (PlayRequest) -> Unit) {
     val tmdb = d.long("tmdb_id")
     // a Filmarks season page is one TMDB season; an English show page has all of them
@@ -214,8 +215,14 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, sb: Map<
     var season by remember(tmdb) { mutableStateOf(seasons.first()) }
     var data by remember(tmdb, season) { mutableStateOf<JsonObject?>(null) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(tmdb, season) {
-        data = runCatching { api.get("/shows/$tmdb/seasons/$season") }.getOrNull()
+    // reloaded when back from the player, and again once the server's Trakt
+    // pull (kicked by the finished episode) has brought the play in
+    LaunchedEffect(tmdb, season, returns) {
+        runCatching { api.get("/shows/$tmdb/seasons/$season") }.getOrNull()?.let { data = it }
+        if (returns > 0) {
+            delay(8000)
+            runCatching { api.get("/shows/$tmdb/seasons/$season") }.getOrNull()?.let { data = it }
+        }
     }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (seasons.size > 1) {
