@@ -14,6 +14,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.lifecycleScope
@@ -48,6 +49,8 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var player: ExoPlayer
     private lateinit var view: PlayerView
     private var api: Api? = null
+    private var plays: Plays? = null
+    private var chain: JsonObject? = null
     private var en = false
     private val tick = Handler(Looper.getMainLooper())
     private var timeBar: DefaultTimeBar? = null
@@ -83,9 +86,13 @@ class PlayerActivity : ComponentActivity() {
         scrobbleBody = parse(intent.getStringExtra("scrobbleBody"))
         introStart = intent.getDoubleExtra("introStart", -1.0)
         introEnd = intent.getDoubleExtra("introEnd", -1.0)
-        nextLabel = intent.getStringExtra("nextLabel") ?: ""
+        chain = parse(intent.getStringExtra("chain"))
+        nextLabel = nextLabel(en, chain)
         outroStart = intent.getDoubleExtra("outroStart", -1.0)
-        lifecycleScope.launch { api = Api(SettingsStore(applicationContext).settings.first()) }
+        lifecycleScope.launch {
+            val st = SettingsStore(applicationContext).settings.first()
+            api = Api(st).also { plays = Plays(st, it) }
+        }
 
         // the platform's decoders first (and passthrough to a receiver); FFmpeg
         // decodes what neither handles (DTS, TrueHD, …), instead of silence
@@ -282,10 +289,45 @@ class PlayerActivity : ComponentActivity() {
         })
     }
 
+    /**
+     * The next episode, in this player: fetched from the chain the title page
+     * gave (so it works even if Android has closed the app behind the player),
+     * and the chain moves on with it, for a whole run of episodes.
+     */
     private fun playNext() {
         countdown = -1
-        setResult(RESULT_OK, Intent().putExtra("playNext", true))
-        finish()
+        nextBox.visibility = View.GONE
+        nextBtn.visibility = View.GONE
+        val c = chain
+        val p = plays
+        if (c == null || p == null) return finish()
+        nextText.text = tr(en, "次のエピソードを準備中…", "Getting the next episode…")
+        lifecycleScope.launch {
+            val r = runCatching { p.next(c) }.onFailure { Report.send(this@PlayerActivity, "next", it.toString()) }.getOrNull()
+            if (r == null) finish() else load(r)
+        }
+    }
+
+    /** Switches the player to another episode's stream, its saving and scrobbling with it. */
+    private fun load(r: PlayRequest) {
+        url = r.url
+        title = r.title
+        progressPath = r.progressPath
+        progressBody = r.progressBody
+        scrobblePath = r.scrobblePath
+        scrobbleBody = r.scrobbleBody
+        introStart = r.introStart
+        introEnd = r.introEnd
+        outroStart = r.outroStart
+        subShift = 0.0
+        subsJson = r.subs.map { JsonObject(mapOf("url" to JsonPrimitive(it.url), "lang" to JsonPrimitive(it.lang), "label" to JsonPrimitive(it.label))) }
+        chain = r.chain
+        nextLabel = nextLabel(en, chain)
+        player.setMediaItem(mediaItem())
+        player.prepare()
+        if (r.startSec > 60) player.seekTo(r.startSec * 1000)
+        player.playWhenReady = true
+        Toast.makeText(this, title, Toast.LENGTH_SHORT).show()
     }
 
     // Holding left/right on the bar speeds up: 10 s steps, then 30 s, 1 min, 2 min

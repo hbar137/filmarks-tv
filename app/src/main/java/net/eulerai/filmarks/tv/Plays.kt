@@ -5,7 +5,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -29,15 +31,16 @@ data class PlayRequest(
     val introStart: Double = -1.0,
     val introEnd: Double = -1.0,
     val outroStart: Double = -1.0, // an anime's ending credits (aniskip): the next-episode button shows from here
-    val nextLabel: String = "",
-    val next: (() -> Unit)? = null,
+    // how to find the next episode (see Plays.next): the player follows it
+    // itself, in place, so a run of episodes keeps going
+    val chain: JsonObject? = null,
     val audioLang: String = "", // the title's original language: its audio track is chosen first
     val path: String = "",      // the title's page (Watch Next opens it)
     val poster: String = "",
 )
 
 /** Turns a choice on a title page into a PlayRequest, through the server's device API. */
-class Plays(private val s: Settings, private val api: Api) {
+class Plays(private val s: Settings, val api: Api) {
 
     /**
      * Online subtitles (OpenSubtitles / SubDL through the server) in Japanese and
@@ -157,4 +160,69 @@ class Plays(private val s: Settings, private val api: Api) {
         if (outro != null && outro.dbl("start") > 0) out = out.copy(outroStart = outro.dbl("start"))
         out
     }
+}
+
+// ---- the next episode
+//
+// A chain is {type:"tmdb", tmdb, season, last_season, show, episodes[], index,
+// sb:{episode id: [hash, number]}} (a TMDB season's episodes; downloaded
+// files where there are some) or {type:"files", hash, title, files[], index}
+// (a download TMDB can't place).
+
+fun tmdbChain(tmdb: Long, season: Int, lastSeason: Int, show: JsonObject, episodes: List<JsonObject>, index: Int,
+              sb: Map<Long, Pair<String, Int>>): JsonObject = JsonObject(mapOf(
+    "type" to JsonPrimitive("tmdb"), "tmdb" to JsonPrimitive(tmdb), "season" to JsonPrimitive(season),
+    "last_season" to JsonPrimitive(lastSeason), "show" to show, "episodes" to JsonArray(episodes),
+    "index" to JsonPrimitive(index),
+    "sb" to JsonObject(sb.map { (k, v) -> k.toString() to JsonArray(listOf(JsonPrimitive(v.first), JsonPrimitive(v.second))) }.toMap()),
+))
+
+fun filesChain(hash: String, title: String, files: List<JsonObject>, index: Int): JsonObject = JsonObject(mapOf(
+    "type" to JsonPrimitive("files"), "hash" to JsonPrimitive(hash), "title" to JsonPrimitive(title),
+    "files" to JsonArray(files), "index" to JsonPrimitive(index),
+))
+
+private fun JsonObject.with(vararg kv: Pair<String, kotlinx.serialization.json.JsonElement>) = JsonObject(this + kv.toMap())
+
+private fun sbOf(chain: JsonObject, epid: Long): Pair<String, Int>? =
+    (chain["sb"].obj()?.get(epid.toString()) as? JsonArray)?.let {
+        (it[0] as JsonPrimitive).content to (it[1] as JsonPrimitive).content.toInt()
+    }
+
+/** The next episode's label ("E5 Title", "S2 E1 …"), "" when none is known. */
+fun nextLabel(en: Boolean, chain: JsonObject?): String {
+    val c = chain ?: return ""
+    val i = c.long("index").toInt()
+    return when (c.str("type")) {
+        "tmdb" -> c.arr("episodes").getOrNull(i + 1)?.let { "E${it.long("episode_number")} " + it.str("name") }
+            ?: if (c.long("season") < c.long("last_season")) tr(en, "シーズン${c.long("season") + 1}", "Season ${c.long("season") + 1}") else ""
+        "files" -> c.arr("files").getOrNull(i + 1)?.let { tr(en, "第${it.long("number")}話", "E${it.long("number")}") } ?: ""
+        else -> ""
+    }
+}
+
+/** Plays the chain's next episode: its request and the chain moved on to it; null at the end. */
+suspend fun Plays.next(chain: JsonObject, status: (String) -> Unit = {}): PlayRequest? {
+    val i = chain.long("index").toInt()
+    when (chain.str("type")) {
+        "tmdb" -> {
+            val show = chain["show"].obj() ?: JsonObject(emptyMap())
+            val eps = chain.arr("episodes")
+            eps.getOrNull(i + 1)?.let { ep ->
+                return episode(show, ep, sbOf(chain, ep.long("id")), status).copy(chain = chain.with("index" to JsonPrimitive(i + 1)))
+            }
+            val season = chain.long("season")
+            if (season >= chain.long("last_season")) return null
+            val ns = api.get("/shows/${chain.long("tmdb")}/seasons/${season + 1}")
+            val first = ns.arr("episodes").firstOrNull() ?: return null
+            val show2 = ns["show"].obj() ?: show
+            return episode(show2, first, sbOf(chain, first.long("id")), status).copy(chain = chain.with(
+                "season" to JsonPrimitive(season + 1), "show" to show2, "episodes" to JsonArray(ns.arr("episodes")), "index" to JsonPrimitive(0)))
+        }
+        "files" -> {
+            val f = chain.arr("files").getOrNull(i + 1) ?: return null
+            return seedbox(chain.str("hash"), f.long("number").toInt(), chain.str("title")).copy(chain = chain.with("index" to JsonPrimitive(i + 1)))
+        }
+    }
+    return null
 }

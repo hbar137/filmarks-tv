@@ -93,11 +93,7 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen
     // a download's files by number, the next one queued for the countdown
     fun playFile(hash: String, files: List<JsonObject>, i: Int) {
         status = tr(s.en, "準備中…", "Starting…")
-        run {
-            val r = plays.seedbox(hash, files[i].long("number").toInt(), d.str("title"))
-            val nx = files.getOrNull(i + 1)
-            if (nx == null) r else r.copy(nextLabel = tr(s.en, "第${nx.long("number")}話", "E${nx.long("number")}"), next = { playFile(hash, files, i + 1) })
-        }
+        run { plays.seedbox(hash, files[i].long("number").toInt(), d.str("title")).copy(chain = filesChain(hash, d.str("title"), files, i)) }
     }
     fun loadRD() = scope.launch {
         try {
@@ -249,21 +245,7 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, sb: Map<
             scope.launch {
                 try {
                     val r = plays.episode(showInfo, ep, sb[ep.long("id")], onStatus)
-                    var label = ""
-                    var next: (() -> Unit)? = null
-                    val nx = list.getOrNull(i + 1)
-                    if (nx != null) {
-                        label = "E${nx.long("episode_number")} " + nx.str("name")
-                        next = { start(seasonNum, list, showInfo, i + 1) }
-                    } else if (seasonNum < seasons.last()) {
-                        val ns = runCatching { api.get("/shows/$tmdb/seasons/${seasonNum + 1}") }.getOrNull()
-                        val first = ns?.arr("episodes")?.firstOrNull()
-                        if (first != null) {
-                            label = "S${seasonNum + 1} E${first.long("episode_number")} " + first.str("name")
-                            next = { start(seasonNum + 1, ns.arr("episodes"), ns["show"].obj() ?: showInfo, 0) }
-                        }
-                    }
-                    onPlay(if (next == null) r else r.copy(nextLabel = label, next = next))
+                    onPlay(r.copy(chain = tmdbChain(tmdb, seasonNum, seasons.last(), showInfo, list, i, sb)))
                     onStatus("")
                 } catch (e: Exception) {
                     onStatus(e.message ?: "error")
