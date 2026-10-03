@@ -11,8 +11,13 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** An online subtitle the player can switch to (WebVTT from the server). */
-data class Sub(val url: String, val lang: String, val label: String)
+/** A subtitle the player can switch to (WebVTT from the server; its timing added as &shift=&scale=). */
+data class Sub(val id: String, val url: String, val lang: String, val label: String) {
+    fun json() = JsonObject(mapOf("id" to JsonPrimitive(id), "url" to JsonPrimitive(url), "lang" to JsonPrimitive(lang), "label" to JsonPrimitive(label)))
+}
+
+/** A file's subtitles, and the one picked for it before ({id, delay, scale}; on any device). */
+data class Subs(val items: List<Sub> = emptyList(), val choice: JsonObject? = null)
 
 /**
  * What the player needs: the stream, where to resume, where to save
@@ -25,7 +30,8 @@ data class PlayRequest(
     val startSec: Long,
     val progressPath: String,
     val progressBody: JsonObject,
-    val subs: List<Sub> = emptyList(),
+    val subs: Subs = Subs(),
+    val subsBase: String = "", // the file's subtitle routes (under the API)
     val scrobblePath: String = "",
     val scrobbleBody: JsonObject? = null,
     val introStart: Double = -1.0,
@@ -43,24 +49,29 @@ data class PlayRequest(
 class Plays(private val s: Settings, val api: Api) {
 
     /**
-     * Online subtitles (OpenSubtitles / SubDL through the server) in Japanese and
-     * English, at most 4 each; given up on after 8 s so playback never waits long.
+     * The file's subtitles (play responses' subs_base): online ones in Japanese
+     * and English, those made for this very file first, and the torrent's
+     * subtitle files; given up on after 12 s so playback never waits long.
      */
-    private suspend fun subs(listPath: String): List<Sub> = withTimeoutOrNull(8000) {
-        runCatching {
-            api.get(listPath, "languages" to "ja,en").arr("items").groupBy { it.str("language").lowercase() }
-                .flatMap { (_, l) -> l.take(4) }
-                .mapNotNull { r ->
-                    val id = r.str("file_id").ifEmpty { return@mapNotNull null }
-                    val source = r.str("source").ifEmpty { "opensubtitles" }
-                    val lang = r.str("language").lowercase()
-                    val name = r.str("file_name").ifEmpty { r.str("release") }.ifEmpty { lang }
-                    val url = s.server + "/api/kodi/subtitle-file/" + source + "/" + URLEncoder.encode(id, "UTF-8").replace("+", "%20") +
-                        "/sub.vtt?p=" + URLEncoder.encode(s.password, "UTF-8")
-                    Sub(url, lang, "$lang · $name")
-                }
-        }.getOrDefault(emptyList())
-    } ?: emptyList()
+    private suspend fun subs(p: JsonObject): Pair<Subs, String> {
+        val base = p.str("subs_base").removePrefix("/api/kodi")
+        if (base == "") return Subs() to ""
+        val subs = withTimeoutOrNull(12000) {
+            runCatching {
+                val r = api.get("$base/subs", "languages" to "ja,en", "lang" to if (s.en) "en" else null)
+                val seen = mutableMapOf<String, Int>()
+                Subs(r.arr("items").mapNotNull { x ->
+                    val id = x.str("id").ifEmpty { return@mapNotNull null }
+                    // the player tells tracks apart by label
+                    var label = x.str("label")
+                    val n = seen.merge(label, 1, Int::plus)!!
+                    if (n > 1) label += " ($n)"
+                    Sub(id, s.server + x.str("url") + "&p=" + URLEncoder.encode(s.password, "UTF-8"), x.str("lang"), label)
+                }, r["choice"].obj())
+            }.getOrNull()
+        } ?: Subs()
+        return subs to base
+    }
 
     private fun movieScrobble(imdb: String) =
         if (imdb == "") null else buildJsonObject { put("imdb_id", imdb) }
@@ -70,16 +81,16 @@ class Plays(private val s: Settings, val api: Api) {
         val p = if (n > 0) api.get("/play-seedbox/$hash", "n" to n, "fs" to fileSeason.takeIf { it > 0 }) else api.get("/play-seedbox/$hash")
         if (n > 0) {
             val epid = p.long("episode_id")
-            val subs = async { if (epid > 0) subs("/episode-subtitles/$epid") else emptyList() }
+            val (subs, base) = subs(p)
             PlayRequest(p.str("stream_url"), "${p.str("show_title").ifEmpty { fallbackTitle }} · " + tr(s.en, "第${n}話", "E$n"),
                 p.long("position_seconds"), "/progress-episode",
                 buildJsonObject { put("episode_id", epid); put("show_id", p.long("show_id")); put("link_id", 0); put("seedbox", hash); put("number", n) },
-                subs.await(), "/scrobble-episode", episodeScrobble(p))
+                subs, base, "/scrobble-episode", episodeScrobble(p))
         } else {
-            val subs = async { if (p.long("movie_id") > 0) subs("/subtitles/${p.long("movie_id")}") else emptyList() }
+            val (subs, base) = subs(p)
             PlayRequest(p.str("stream_url"), p.str("title").ifEmpty { fallbackTitle }, p.long("position_seconds"), "/progress",
                 buildJsonObject { put("movie_id", p.long("movie_id")); put("link_id", 0); put("seedbox", hash) },
-                subs.await(), "/scrobble", movieScrobble(p.str("imdb_id")))
+                subs, base, "/scrobble", movieScrobble(p.str("imdb_id")))
         }
     }
 
@@ -103,11 +114,11 @@ class Plays(private val s: Settings, val api: Api) {
 
     /** A movie's Real-Debrid link. */
     suspend fun rdMovie(tmdb: Long, linkId: Long, fallbackTitle: String): PlayRequest = coroutineScope {
-        val subs = async { subs("/subtitles/$tmdb") }
         val p = api.get("/play/$linkId")
+        val (subs, base) = subs(p)
         PlayRequest(p.str("stream_url"), p.str("title").ifEmpty { fallbackTitle }, p.long("position_seconds"), "/progress",
             buildJsonObject { put("movie_id", tmdb); put("link_id", linkId) },
-            subs.await(), "/scrobble", movieScrobble(p.str("imdb_id")))
+            subs, base, "/scrobble", movieScrobble(p.str("imdb_id")))
     }
 
     private fun episodeScrobble(p: JsonObject) =
@@ -144,13 +155,13 @@ class Plays(private val s: Settings, val api: Api) {
                 }
                 if (!found) throw Exception(tr(s.en, "Real-Debrid に見つかりません", "Not found on Real-Debrid"))
             }
-            val subs = async { subs("/episode-subtitles/$epid") }
             val p = api.get("/play-episode/$epid")
+            val (subs, base) = subs(p)
             PlayRequest(p.str("stream_url"),
                 "${p.str("show_title")} · S${p.long("season_number")} E${p.long("episode_number")} ${p.str("episode_title")}",
                 p.long("position_seconds"), "/progress-episode",
                 buildJsonObject { put("episode_id", epid); put("show_id", p.long("show_id")); put("link_id", epid) },
-                subs.await(), "/scrobble-episode", episodeScrobble(p))
+                subs, base, "/scrobble-episode", episodeScrobble(p))
         }
         val sk = skip.await()
         val intro = sk?.get("intro").obj()
