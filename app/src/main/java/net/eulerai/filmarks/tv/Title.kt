@@ -254,7 +254,8 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, returns:
                 }.onFailure { onStatus(tr(s.en, "保存できませんでした", "Couldn't save") + ": ${it.message}") }
             }
         }
-        // hold OK on an episode: watched / not, or everything up to it
+        // the ✓ button at a row's end (or holding OK, where the remote repeats
+        // it): watched / not, or everything up to it
         fun menu(i: Int) {
             val ep = eps[i]
             val on = !seen(ep)
@@ -272,7 +273,6 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, returns:
                 OutlinedButton(onClick = { mark(eps, !all) }) {
                     Text(if (all) tr(s.en, "このシーズンを未視聴にする", "Mark season unwatched") else tr(s.en, "このシーズンを全部観たにする", "Mark season watched"))
                 }
-                Text(tr(s.en, "エピソードでOK長押し：観た／未視聴", "Hold OK on an episode: watched / unwatched"), color = Palette.muted, fontSize = 13.sp)
             }
         }
         val show = sd["show"].obj() ?: JsonObject(emptyMap())
@@ -298,7 +298,8 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, returns:
             val n = ep.long("episode_number")
             val seen = seen(ep)
             val src = if (files.containsKey(ep.long("id").toString())) tr(s.en, "ダウンロード済み", "downloaded") else ""
-            OutlinedButton(onClick = { playAt(i) }, onLongClick = { menu(i) }, modifier = Modifier.width(1100.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { playAt(i) }, onLongClick = { menu(i) }, modifier = Modifier.width(1020.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     // watched: a dark ✓ on a gold disc, readable on the row both
                     // unselected (dark) and selected (light); unwatched: ▶ in the row's colour
@@ -315,6 +316,17 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, returns:
                     Text(ep.str("name"), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(640.dp))
                     Text(listOf(ep.str("air_date"), src).filter { it != "" }.joinToString(" · "), color = Palette.muted, fontSize = 13.sp)
                 }
+            }
+            // → from the row: watched / unwatched / up to here
+            OutlinedButton(onClick = { menu(i) }) {
+                if (seen) {
+                    Box(Modifier.size(20.dp).background(Palette.gold, CircleShape), contentAlignment = Alignment.Center) {
+                        Text("✓", color = Color(0xFF111111), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    Text("○")
+                }
+            }
             }
         }
     }
