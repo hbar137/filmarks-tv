@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.layout.ContentScale
@@ -38,7 +39,9 @@ import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -210,7 +213,9 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, returns:
     val lastSeason = maxOf(seasons.last(), d.long("seasons").toInt())
     var season by remember(tmdb) { mutableStateOf(seasons.first()) }
     var data by remember(tmdb, season) { mutableStateOf<JsonObject?>(null) }
+    var marks by remember(tmdb, season) { mutableStateOf(mapOf<Long, Boolean>()) } // episode id -> watched, marked here
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     // reloaded when back from the player, and again once the server's Trakt
     // pull (kicked by the finished episode) has brought the play in
     LaunchedEffect(tmdb, season, returns) {
@@ -236,6 +241,40 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, returns:
         }
         val eps = sd.arr("episodes")
         val watched = sd["watched"].obj()
+        // marked here: shown at once (the server's list catches up on reload)
+        fun seen(ep: JsonObject) = marks[ep.long("id")] ?: (watched?.bool(ep.long("id").toString()) == true)
+        fun mark(list: List<JsonObject>, on: Boolean) {
+            marks = marks + list.associate { it.long("id") to on }
+            scope.launch {
+                runCatching {
+                    api.post("/app/watched", buildJsonObject {
+                        put("media", "episode"); put("tmdb", tmdb); put("season", season); put("on", on)
+                        put("episodes", JsonArray(list.map { JsonPrimitive(it.long("episode_number")) }))
+                    })
+                }.onFailure { onStatus(tr(s.en, "保存できませんでした", "Couldn't save") + ": ${it.message}") }
+            }
+        }
+        // hold OK on an episode: watched / not, or everything up to it
+        fun menu(i: Int) {
+            val ep = eps[i]
+            val on = !seen(ep)
+            val items = arrayOf(
+                if (on) tr(s.en, "観たにする", "Mark watched") else tr(s.en, "未視聴にする", "Mark unwatched"),
+                tr(s.en, "ここまで観たにする", "Mark watched up to here"))
+            android.app.AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("E${ep.long("episode_number")} ${ep.str("name")}")
+                .setItems(items) { _, which -> if (which == 0) mark(listOf(ep), on) else mark(eps.take(i + 1), true) }
+                .show()
+        }
+        if (eps.isNotEmpty()) {
+            val all = eps.all { seen(it) }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                OutlinedButton(onClick = { mark(eps, !all) }) {
+                    Text(if (all) tr(s.en, "このシーズンを未視聴にする", "Mark season unwatched") else tr(s.en, "このシーズンを全部観たにする", "Mark season watched"))
+                }
+                Text(tr(s.en, "エピソードでOK長押し：観た／未視聴", "Hold OK on an episode: watched / unwatched"), color = Palette.muted, fontSize = 13.sp)
+            }
+        }
         val show = sd["show"].obj() ?: JsonObject(emptyMap())
         // this season's episodes on the seedbox: id -> {hash, number, file_season}
         val files = sd["seedbox"].obj() ?: JsonObject(emptyMap())
@@ -257,9 +296,9 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, returns:
         fun playAt(i: Int) = start(season, eps, show, i)
         eps.forEachIndexed { i, ep ->
             val n = ep.long("episode_number")
-            val seen = watched?.bool(ep.long("id").toString()) == true
+            val seen = seen(ep)
             val src = if (files.containsKey(ep.long("id").toString())) tr(s.en, "ダウンロード済み", "downloaded") else ""
-            OutlinedButton(onClick = { playAt(i) }, modifier = Modifier.width(1100.dp)) {
+            OutlinedButton(onClick = { playAt(i) }, onLongClick = { menu(i) }, modifier = Modifier.width(1100.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     // watched: a dark ✓ on a gold disc, readable on the row both
                     // unselected (dark) and selected (light); unwatched: ▶ in the row's colour
