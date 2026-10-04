@@ -329,7 +329,11 @@ class PlayerActivity : ComponentActivity() {
         Toast.makeText(this, tr(en, "字幕を合わせました", "Subtitles synced") + msg, Toast.LENGTH_SHORT).show()
     }
 
-    /** Auto-align on the server (the file's own subtitle track, else its audio: a few minutes). */
+    /**
+     * Auto-align on the server (the file's own subtitle track: seconds; else
+     * its audio: a few minutes). The server then serves that subtitle aligned
+     * for this file, so the player's own timing goes back to ±0.
+     */
     private fun autoAlign() {
         val sub = needSub() ?: return
         val a = api ?: return
@@ -345,7 +349,10 @@ class PlayerActivity : ComponentActivity() {
                         t[0] = st.dbl("shift"); t[1] = st.dbl("scale").takeIf { it > 0 } ?: 1.0
                         anchors.remove(id)
                         applyTiming(sub)
-                        Toast.makeText(this@PlayerActivity, tr(en, "字幕を自動調整しました", "Subtitles aligned") + " (%+.1f".format(t[0]) + tr(en, "秒)", " s)"), Toast.LENGTH_LONG).show()
+                        // the server serves the subtitle aligned (each section by its own offset)
+                        val n = st.long("segments")
+                        Toast.makeText(this@PlayerActivity, tr(en, "字幕を自動調整しました", "Subtitles aligned") +
+                            if (n > 1) tr(en, "（${n}区間）", " ($n sections)") else "", Toast.LENGTH_LONG).show()
                         aligning = null
                         return@launch
                     }
