@@ -418,6 +418,8 @@ class PlayerActivity : ComponentActivity() {
         root.addView(timingRow, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, 48, 64, 0) })
         view.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v ->
             timingRow.visibility = if (v == View.VISIBLE && subsJson.isNotEmpty()) View.VISIBLE else View.GONE
+            // the controls open on the timeline (← / → scrub; ↑ / ↓ to the buttons)
+            if (v == View.VISIBLE) view.post { timeBar?.requestFocus() }
         })
         return root
     }
@@ -518,8 +520,9 @@ class PlayerActivity : ComponentActivity() {
         Toast.makeText(this, title, Toast.LENGTH_SHORT).show()
     }
 
-    // Holding left/right on the bar speeds up: 10 s steps, then 30 s, 1 min, 2 min
-    // (the remote repeats a held key ~20 times a second).
+    // ← / → scrub the timeline (from hidden controls too); holding speeds up:
+    // 10 s steps, then 30 s, 1 min, 2 min (the remote repeats a held key
+    // ~20 times a second).
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN &&
             (event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT || event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)) {
@@ -530,6 +533,23 @@ class PlayerActivity : ComponentActivity() {
                 r < 60 -> 60_000L
                 else -> 120_000L
             })
+            // controls hidden: ← / → open them on the timeline, already scrubbing
+            val tb = timeBar
+            if (tb != null && countdown < 0 && !view.isControllerFullyVisible) {
+                view.showController()
+                tb.requestFocus()
+                tb.onKeyDown(event.keyCode, event)
+                return true
+            }
+        }
+        // OK on the timeline: ends a scrub there, else play / pause
+        val tb = timeBar
+        if (tb != null && tb.hasFocus() && view.isControllerFullyVisible &&
+            (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || event.keyCode == KeyEvent.KEYCODE_ENTER)) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && !tb.onKeyDown(event.keyCode, event)) {
+                if (player.isPlaying) player.pause() else player.play()
+            }
+            return true
         }
         return super.dispatchKeyEvent(event)
     }
