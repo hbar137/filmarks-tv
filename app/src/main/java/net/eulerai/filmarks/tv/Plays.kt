@@ -11,9 +11,14 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** A subtitle the player can switch to (WebVTT from the server; its timing added as &shift=&scale=). */
-data class Sub(val id: String, val url: String, val lang: String, val label: String) {
-    fun json() = JsonObject(mapOf("id" to JsonPrimitive(id), "url" to JsonPrimitive(url), "lang" to JsonPrimitive(lang), "label" to JsonPrimitive(label)))
+/**
+ * A subtitle the player can switch to (from the server; its timing added as
+ * &shift=&scale=): WebVTT, or format "ass" an ASS original, which the
+ * player renders itself (positions, colours, styles).
+ */
+data class Sub(val id: String, val url: String, val lang: String, val label: String, val format: String = "") {
+    fun json() = JsonObject(mapOf("id" to JsonPrimitive(id), "url" to JsonPrimitive(url), "lang" to JsonPrimitive(lang),
+        "label" to JsonPrimitive(label), "format" to JsonPrimitive(format)))
 }
 
 /** A file's subtitles, and the one picked for it before ({id, delay, scale}; on any device). */
@@ -58,7 +63,7 @@ class Plays(private val s: Settings, val api: Api) {
         if (base == "") return Subs() to ""
         val subs = withTimeoutOrNull(12000) {
             runCatching {
-                val r = api.get("$base/subs", "languages" to "ja,en", "lang" to if (s.en) "en" else null)
+                val r = api.get("$base/subs", "languages" to "ja,en", "lang" to if (s.en) "en" else null, "ass" to 1)
                 val seen = mutableMapOf<String, Int>()
                 Subs(r.arr("items").mapNotNull { x ->
                     val id = x.str("id").ifEmpty { return@mapNotNull null }
@@ -66,7 +71,7 @@ class Plays(private val s: Settings, val api: Api) {
                     var label = x.str("label")
                     val n = seen.merge(label, 1, Int::plus)!!
                     if (n > 1) label += " ($n)"
-                    Sub(id, s.server + x.str("url") + "&p=" + URLEncoder.encode(s.password, "UTF-8"), x.str("lang"), label)
+                    Sub(id, s.server + x.str("url") + "&p=" + URLEncoder.encode(s.password, "UTF-8"), x.str("lang"), label, x.str("format"))
                 }, r["choice"].obj())
             }.getOrNull()
         } ?: Subs()

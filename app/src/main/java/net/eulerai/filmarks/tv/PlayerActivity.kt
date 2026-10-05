@@ -188,7 +188,7 @@ class PlayerActivity : ComponentActivity() {
             val t = timing[it.str("id")]
             val u = it.str("url") + if (t != null && (t[0] != 0.0 || t[1] != 1.0)) "&shift=${t[0]}&scale=${t[1]}" else ""
             MediaItem.SubtitleConfiguration.Builder(Uri.parse(u)).setId(it.str("id"))
-                .setMimeType(MimeTypes.TEXT_VTT).setLanguage(it.str("lang")).setLabel(it.str("label")).build()
+                .setMimeType(if (it.str("format") == "ass") MimeTypes.TEXT_SSA else MimeTypes.TEXT_VTT).setLanguage(it.str("lang")).setLabel(it.str("label")).build()
         })
         .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build()
 
@@ -294,7 +294,7 @@ class PlayerActivity : ComponentActivity() {
         val v = player.currentPosition / 1000.0 - 0.3 // the press comes a moment after the line starts
         player.pause()
         lifecycleScope.launch {
-            val cues = cueCache[id] ?: runCatching { withContext(Dispatchers.IO) { parseCues(java.net.URL(sub.str("url")).readText()) } }
+            val cues = cueCache[id] ?: runCatching { withContext(Dispatchers.IO) { parseCues(java.net.URL(sub.str("url").replace("&fmt=ass", "")).readText()) } }
                 .getOrNull()?.also { cueCache[id] = it }
             val t = timingOf(id)
             val near = cues.orEmpty().filter { abs(it.first * t[1] + t[0] - v) <= 90 }
