@@ -27,7 +27,7 @@ import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import kotlinx.serialization.json.JsonObject
 
-/** The website's browse page: sort, genre and country filters over a poster grid. */
+/** The website's browse page: sort, genre, country and (English) language filters over a poster grid. */
 @Composable
 fun BrowseScreen(s: Settings, kind: String, onOpen: (String) -> Unit) {
     val sorts = if (s.en) listOf("popular" to "Most popular", "rating" to "Top rated", "newest" to "Newest")
@@ -35,40 +35,44 @@ fun BrowseScreen(s: Settings, kind: String, onOpen: (String) -> Unit) {
     var sort by remember(s.lang) { mutableStateOf(sorts.first().first) }
     var genre by remember(s.lang, kind) { mutableStateOf<JsonObject?>(null) }
     var country by remember(s.lang, kind) { mutableStateOf<JsonObject?>(null) }
-    var picking by remember { mutableStateOf("") } // "genre" | "country" while choosing
-    var cards by remember(s.lang, kind, sort, genre, country) { mutableStateOf<List<JsonObject>?>(null) }
+    var language by remember(s.lang, kind) { mutableStateOf<JsonObject?>(null) }
+    var picking by remember { mutableStateOf("") } // "genre" | "country" | "language" while choosing
+    var cards by remember(s.lang, kind, sort, genre, country, language) { mutableStateOf<List<JsonObject>?>(null) }
     var genres by remember(s.lang, kind) { mutableStateOf<List<JsonObject>>(emptyList()) }
     var countries by remember(s.lang, kind) { mutableStateOf<List<JsonObject>>(emptyList()) }
-    var page by remember(s.lang, kind, sort, genre, country) { mutableIntStateOf(1) }
+    var languages by remember(s.lang, kind) { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var page by remember(s.lang, kind, sort, genre, country, language) { mutableIntStateOf(1) }
     var more by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     val api = remember(s) { Api(s) }
     suspend fun load(p: Int) {
         try {
             val d = api.get("/app/browse", "lang" to s.lang, "kind" to kind, "sort" to sort, "page" to p,
-                "genre" to genre?.str("value"), "country" to country?.str("value"))
+                "genre" to genre?.str("value"), "country" to country?.str("value"), "language" to language?.str("value"))
             cards = (if (p == 1) emptyList() else cards.orEmpty()) + d.arr("cards")
             if (genres.isEmpty()) genres = d.arr("genres")
             if (countries.isEmpty()) countries = d.arr("countries")
+            if (languages.isEmpty()) languages = d.arr("languages")
             more = d.bool("more"); page = p; error = ""
         } catch (e: Exception) {
             error = e.message ?: e.javaClass.simpleName
         }
     }
-    LaunchedEffect(s.lang, kind, sort, genre, country) { load(1) }
+    LaunchedEffect(s.lang, kind, sort, genre, country, language) { load(1) }
     val grid = rememberLazyGridState()
     InfiniteLoad(grid, cards?.size ?: 0, more) { load(page + 1) }
 
     if (picking != "") {
-        val opts = if (picking == "genre") genres else countries
+        val opts = when (picking) { "genre" -> genres; "country" -> countries; else -> languages }
+        fun pick(o: JsonObject?) { when (picking) { "genre" -> genre = o; "country" -> country = o; else -> language = o }; picking = "" }
         Column(Modifier.fillMaxSize().padding(top = 32.dp)) {
-            Text(tr(s.en, if (picking == "genre") "ジャンル" else "国・地域", if (picking == "genre") "Genre" else "Country"),
+            Text(when (picking) { "genre" -> tr(s.en, "ジャンル", "Genre"); "country" -> tr(s.en, "国・地域", "Country"); else -> tr(s.en, "言語", "Language") },
                 fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Palette.text, modifier = Modifier.padding(start = 48.dp, bottom = 16.dp))
             LazyVerticalGrid(GridCells.Adaptive(220.dp), contentPadding = PaddingValues(start = 48.dp, end = 48.dp, bottom = 48.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                item { OutlinedButton(onClick = { if (picking == "genre") genre = null else country = null; picking = "" }) { Text(tr(s.en, "すべて", "All")) } }
+                item { OutlinedButton(onClick = { pick(null) }) { Text(tr(s.en, "すべて", "All")) } }
                 items(opts) { o ->
-                    OutlinedButton(onClick = { if (picking == "genre") genre = o else country = o; picking = "" }) {
+                    OutlinedButton(onClick = { pick(o) }) {
                         Text("${o.str("name")}  ${o.long("count")}", maxLines = 1)
                     }
                 }
@@ -82,6 +86,7 @@ fun BrowseScreen(s: Settings, kind: String, onOpen: (String) -> Unit) {
             items(sorts) { (k, label) -> if (k == sort) Button(onClick = {}) { Text(label) } else OutlinedButton(onClick = { sort = k }) { Text(label) } }
             item { OutlinedButton(onClick = { picking = "genre" }) { Text(genre?.str("name") ?: tr(s.en, "ジャンル ▾", "Genre ▾")) } }
             item { OutlinedButton(onClick = { picking = "country" }) { Text(country?.str("name") ?: tr(s.en, "国・地域 ▾", "Country ▾")) } }
+            if (languages.isNotEmpty()) item { OutlinedButton(onClick = { picking = "language" }) { Text(language?.str("name") ?: tr(s.en, "言語 ▾", "Language ▾")) } }
         }
         when {
             error != "" -> Text(error, color = Palette.red, modifier = Modifier.padding(48.dp))
