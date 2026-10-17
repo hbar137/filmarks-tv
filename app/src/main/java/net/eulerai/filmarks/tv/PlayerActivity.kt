@@ -28,6 +28,8 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.CoroutineScope
@@ -110,7 +112,11 @@ class PlayerActivity : ComponentActivity() {
         // the platform's decoders first (and passthrough to a receiver); FFmpeg
         // decodes what neither handles (DTS, TrueHD, …), instead of silence
         val renderers = DefaultRenderersFactory(this).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
-        player = ExoPlayer.Builder(this, renderers).setSeekBackIncrementMs(SEEK_MS).setSeekForwardIncrementMs(SEEK_MS).build()
+        // Blu-ray files (served as TS, see the server's internal/m2ts) carry a clock
+        // reference only every ~100 ms: at 4K bitrates ~5,000 packets apart, past
+        // the 600 Media3 searches for one (no duration, no seeking)
+        val extractors = DefaultExtractorsFactory().setTsExtractorTimestampSearchBytes(12_000 * 188)
+        player = ExoPlayer.Builder(this, renderers, DefaultMediaSourceFactory(this, extractors)).setSeekBackIncrementMs(SEEK_MS).setSeekForwardIncrementMs(SEEK_MS).build()
         view = PlayerView(this).apply {
             this.player = this@PlayerActivity.player
             keepScreenOn = true
