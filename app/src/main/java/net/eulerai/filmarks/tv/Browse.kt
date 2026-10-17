@@ -36,19 +36,20 @@ fun BrowseScreen(s: Settings, kind: String, onOpen: (String) -> Unit) {
     var genre by remember(s.lang, kind) { mutableStateOf<JsonObject?>(null) }
     var country by remember(s.lang, kind) { mutableStateOf<JsonObject?>(null) }
     var language by remember(s.lang, kind) { mutableStateOf<JsonObject?>(null) }
+    var dubsOnly by remember(s.lang, kind, language) { mutableStateOf(false) }
     var picking by remember { mutableStateOf("") } // "genre" | "country" | "language" while choosing
-    var cards by remember(s.lang, kind, sort, genre, country, language) { mutableStateOf<List<JsonObject>?>(null) }
+    var cards by remember(s.lang, kind, sort, genre, country, language, dubsOnly) { mutableStateOf<List<JsonObject>?>(null) }
     var genres by remember(s.lang, kind) { mutableStateOf<List<JsonObject>>(emptyList()) }
     var countries by remember(s.lang, kind) { mutableStateOf<List<JsonObject>>(emptyList()) }
     var languages by remember(s.lang, kind) { mutableStateOf<List<JsonObject>>(emptyList()) }
-    var page by remember(s.lang, kind, sort, genre, country, language) { mutableIntStateOf(1) }
+    var page by remember(s.lang, kind, sort, genre, country, language, dubsOnly) { mutableIntStateOf(1) }
     var more by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     val api = remember(s) { Api(s) }
     suspend fun load(p: Int) {
         try {
             val d = api.get("/app/browse", "lang" to s.lang, "kind" to kind, "sort" to sort, "page" to p,
-                "genre" to genre?.str("value"), "country" to country?.str("value"), "language" to language?.str("value"))
+                "genre" to genre?.str("value"), "country" to country?.str("value"), "language" to language?.str("value"), "dubs" to if (dubsOnly) 1 else null)
             cards = (if (p == 1) emptyList() else cards.orEmpty()) + d.arr("cards")
             if (genres.isEmpty()) genres = d.arr("genres")
             if (countries.isEmpty()) countries = d.arr("countries")
@@ -58,7 +59,7 @@ fun BrowseScreen(s: Settings, kind: String, onOpen: (String) -> Unit) {
             error = e.message ?: e.javaClass.simpleName
         }
     }
-    LaunchedEffect(s.lang, kind, sort, genre, country, language) { load(1) }
+    LaunchedEffect(s.lang, kind, sort, genre, country, language, dubsOnly) { load(1) }
     val grid = rememberLazyGridState()
     InfiniteLoad(grid, cards?.size ?: 0, more) { load(page + 1) }
 
@@ -87,6 +88,10 @@ fun BrowseScreen(s: Settings, kind: String, onOpen: (String) -> Unit) {
             item { OutlinedButton(onClick = { picking = "genre" }) { Text(genre?.str("name") ?: tr(s.en, "ジャンル ▾", "Genre ▾")) } }
             item { OutlinedButton(onClick = { picking = "country" }) { Text(country?.str("name") ?: tr(s.en, "国・地域 ▾", "Country ▾")) } }
             if (languages.isNotEmpty()) item { OutlinedButton(onClick = { picking = "language" }) { Text(language?.str("name") ?: tr(s.en, "言語 ▾", "Language ▾")) } }
+            if (language != null) item {
+                val label = tr(s.en, "吹替のみ", "Dubs only")
+                if (dubsOnly) Button(onClick = { dubsOnly = false }) { Text("✓ $label") } else OutlinedButton(onClick = { dubsOnly = true }) { Text(label) }
+            }
         }
         when {
             error != "" -> Text(error, color = Palette.red, modifier = Modifier.padding(48.dp))
