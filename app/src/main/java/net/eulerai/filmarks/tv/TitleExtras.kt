@@ -121,6 +121,8 @@ fun AvistazSection(s: Settings, api: Api, path: String) {
     var status by remember(path) { mutableStateOf("") }
     var sent by remember(path) { mutableStateOf(setOf<String>()) }
     var armed by remember(path) { mutableStateOf("") } // pressed once: sending counts against the ratio
+    var sending by remember(path) { mutableStateOf("") }
+    var failed by remember(path) { mutableStateOf(mapOf<String, String>()) }
     val scope = rememberCoroutineScope()
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (rs == null) OutlinedButton(onClick = {
@@ -148,20 +150,28 @@ fun AvistazSection(s: Settings, api: Api, path: String) {
             val hash = r.str("hash")
             val action = when (hash) {
                 in sent -> tr(s.en, "✓ 送信済み", "✓ Sent")
+                sending -> tr(s.en, "送信中…", "Sending…")
                 armed -> tr(s.en, "もう一度押して送信", "Press again to send")
+                in failed -> tr(s.en, "失敗: ", "Failed: ") + failed[hash].orEmpty().take(60)
                 else -> tr(s.en, "シードボックスへ", "To seedbox")
             }
             ReleaseCard(r.str("quality"), r.str("title"), details, action, modifier = if (i == 0) Modifier.focusRequester(first) else Modifier,
-                actionColor = if (hash == armed) Palette.red else Palette.gold, onClick = {
-                    if (hash in sent) return@ReleaseCard
+                actionColor = if (hash == armed || (hash in failed && hash != sending)) Palette.red else Palette.gold, onClick = {
+                    if (hash in sent || sending != "") return@ReleaseCard
                     if (armed != hash) { armed = hash; return@ReleaseCard }
                     armed = ""
+                    sending = hash
+                    failed = failed - hash
                     scope.launch {
                         try {
                             api.post("/app/avistaz$path/$hash", buildJsonObject { })
                             sent = sent + hash
                             status = tr(s.en, "シードボックスに送りました。進行は「ダウンロード」で。", "Sent to the seedbox. Progress is under Downloads.")
-                        } catch (e: Exception) { status = e.message ?: "error" }
+                        } catch (e: Exception) {
+                            failed = failed + (hash to (e.message ?: "error"))
+                        } finally {
+                            sending = ""
+                        }
                     }
                 })
         }
