@@ -87,9 +87,9 @@ class Plays(private val s: Settings, val api: Api) {
         if (n > 0) {
             val epid = p.long("episode_id")
             val (subs, base) = subs(p)
-            PlayRequest(p.str("stream_url"), "${p.str("show_title").ifEmpty { fallbackTitle }} · " + tr(s.en, "第${n}話", "E$n"),
+            PlayRequest(p.str("stream_url"), "${p.str("show_title").ifEmpty { fallbackTitle }} · " + p.str("extra_name").ifEmpty { tr(s.en, "第${n}話", "E$n") },
                 p.long("position_seconds"), "/progress-episode",
-                buildJsonObject { put("episode_id", epid); put("show_id", p.long("show_id")); put("link_id", 0); put("seedbox", hash); put("number", n) },
+                buildJsonObject { put("episode_id", epid); put("show_id", p.long("show_id")); put("link_id", 0); put("seedbox", hash); put("number", n); put("file_season", fileSeason) },
                 subs, base, "/scrobble-episode", episodeScrobble(p))
         } else {
             val (subs, base) = subs(p)
@@ -237,7 +237,7 @@ suspend fun Plays.next(chain: JsonObject, status: (String) -> Unit = {}): PlayRe
         }
         "files" -> {
             val f = chain.arr("files").getOrNull(i + 1) ?: return null
-            return seedbox(chain.str("hash"), f.long("number").toInt(), chain.str("title")).copy(chain = chain.with("index" to JsonPrimitive(i + 1)))
+            return seedbox(chain.str("hash"), f.long("number").toInt(), chain.str("title"), f.long("file_season").toInt()).copy(chain = chain.with("index" to JsonPrimitive(i + 1)))
         }
     }
     return null

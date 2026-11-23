@@ -68,8 +68,8 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen
             // below; the rest show in the season's episode list (the season endpoint maps them)
             val unmatched = mutableListOf<JsonObject>()
             for (sb in d.arr("seedbox").filter { it.bool("series") }) {
-                val files = runCatching { api.get("/seedbox/${sb.str("hash")}").arr("episodes") }.getOrDefault(emptyList())
-                if (files.none { it.long("episode_id") > 0 }) unmatched += sb
+                val r = runCatching { api.get("/seedbox/${sb.str("hash")}", "fs" to sb.long("file_season").takeIf { it > 0 }) }.getOrNull() ?: continue
+                if (r.arr("episodes").any { it.long("episode_id") == 0L } || r.arr("extras").isNotEmpty()) unmatched += sb
             }
             sbUnmatched = unmatched
         } catch (e: Exception) {
@@ -93,7 +93,7 @@ fun TitleScreen(s: Settings, path: String, onPlay: (PlayRequest) -> Unit, onOpen
     // a download's files by number, the next one queued for the countdown
     fun playFile(hash: String, files: List<JsonObject>, i: Int) {
         status = tr(s.en, "準備中…", "Starting…")
-        run { plays.seedbox(hash, files[i].long("number").toInt(), d.str("title")).copy(chain = filesChain(hash, d.str("title"), files, i)) }
+        run { plays.seedbox(hash, files[i].long("number").toInt(), d.str("title"), files[i].long("file_season").toInt()).copy(chain = filesChain(hash, d.str("title"), files, i)) }
     }
     fun loadRD() = scope.launch {
         try {
@@ -332,21 +332,34 @@ private fun Seasons(s: Settings, api: Api, plays: Plays, d: JsonObject, returns:
     }
 }
 
-/** A series download whose episodes TMDB can't place: buttons by file number. */
+/** A series download's files TMDB can't place, by number, then its specials and extras. */
 @Composable
 private fun SeedboxFiles(s: Settings, api: Api, sb: JsonObject, onPlay: (List<JsonObject>, Int) -> Unit) {
     var eps by remember(sb) { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var extras by remember(sb) { mutableStateOf<List<JsonObject>>(emptyList()) }
     LaunchedEffect(sb) {
-        eps = runCatching { api.get("/seedbox/${sb.str("hash")}").arr("episodes") }.getOrDefault(emptyList())
+        runCatching { api.get("/seedbox/${sb.str("hash")}", "fs" to sb.long("file_season").takeIf { it > 0 }) }.getOrNull()?.let { r ->
+            eps = r.arr("episodes").filter { it.long("episode_id") == 0L }
+            extras = r.arr("extras")
+        }
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(tr(s.en, "ダウンロード", "Downloaded") + " · ${sb.str("quality")} · ${sb.str("release")}", color = Palette.muted, fontSize = 14.sp)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (eps.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(eps.size) { i ->
                 val e = eps[i]
                 val n = e.long("number").toInt()
-                val label = if (e.long("file_season") > 0) "S${e.long("file_season")} E$n" else tr(s.en, "第${n}話", "E$n")
+                // a file season above 30 is a tag for one title of a pack, not a real season
+                val label = if (e.long("file_season") in 1..30) "S${e.long("file_season")} E$n" else tr(s.en, "第${n}話", "E$n")
                 OutlinedButton(onClick = { onPlay(eps, i) }) { Text("▶ $label") }
+            }
+        }
+        if (extras.isNotEmpty()) {
+            Text(tr(s.en, "特典・番外編", "Specials & extras"), color = Palette.muted, fontSize = 14.sp)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(extras.size) { i ->
+                    OutlinedButton(onClick = { onPlay(listOf(extras[i]), 0) }) { Text("▶ " + extras[i].str("name")) }
+                }
             }
         }
     }
