@@ -58,6 +58,8 @@ dependencies {
     // 1.5.0: the version the FFmpeg audio decoder below is built against
     implementation("androidx.media3:media3-exoplayer:1.5.0")
     implementation("androidx.media3:media3-ui:1.5.0")
+    // TVer streams (HLS, AES-128) through the server's proxy
+    implementation("androidx.media3:media3-exoplayer-hls:1.5.0")
     // DTS / TrueHD / etc. decoded in the app when the TV or receiver can't take them (Jellyfin's build of Media3's FFmpeg extension)
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1")
     // the Google TV home's "Continue watching" (Watch Next)

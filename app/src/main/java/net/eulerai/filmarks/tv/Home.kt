@@ -78,6 +78,7 @@ fun HomeScreen(s: Settings, kind: String, onKind: (String) -> Unit, onLang: () -
             OutlinedButton(onClick = { onPage(PAGE_WATCHLIST) }) { Text(tr(s.en, "ウォッチリスト", "Watchlist")) }
             OutlinedButton(onClick = { onPage(PAGE_HISTORY) }) { Text(tr(s.en, "履歴", "History")) }
             OutlinedButton(onClick = { onPage(PAGE_DOWNLOADS) }) { Text(tr(s.en, "ダウンロード", "Downloads")) }
+            OutlinedButton(onClick = { onPage(PAGE_TVER) }) { Text("TVer") }
             OutlinedButton(onClick = onLang) { Text(if (s.en) "日本語" else "English") }
             OutlinedButton(onClick = onSettings) { Text(tr(s.en, "設定", "Settings")) }
             if (update != "") androidx.tv.material3.Button(onClick = onUpdate) { Text(tr(s.en, "更新 $update", "Update $update")) }
