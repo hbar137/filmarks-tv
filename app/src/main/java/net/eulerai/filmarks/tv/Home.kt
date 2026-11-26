@@ -104,9 +104,9 @@ fun PosterRowOf(s: Settings, row: HomeRow, onOpen: (String) -> Unit) {
 }
 
 @Composable
-fun PosterCard(s: Settings, c: JsonObject, onClick: () -> Unit) {
+fun PosterCard(s: Settings, c: JsonObject, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Column(Modifier.width(140.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Card(onClick = onClick, modifier = Modifier.size(140.dp, 210.dp),
+        Card(onClick = onClick, modifier = modifier.size(140.dp, 210.dp),
             colors = CardDefaults.colors(containerColor = Palette.bg2)) {
             Box(Modifier.fillMaxSize()) {
                 Text(c.str("title"), color = Palette.muted, fontSize = 13.sp, modifier = Modifier.padding(10.dp))

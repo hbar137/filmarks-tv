@@ -107,6 +107,7 @@ private fun App(s: Settings, store: SettingsStore, deepLink: MutableState<String
     var editing by remember { mutableStateOf(!s.ready) }
     var kind by remember { mutableStateOf("movie") }
     var stack by remember { mutableStateOf(listOf<String>()) }
+    val browse = remember { BrowseState() } // kept while titles open on top of Browse
     var update by remember { mutableStateOf("") }
     LaunchedEffect(deepLink.value) {
         deepLink.value?.takeIf { it.startsWith("/") }?.let { stack = listOf(it) }
@@ -144,7 +145,7 @@ private fun App(s: Settings, store: SettingsStore, deepLink: MutableState<String
         PAGE_SEARCH -> SearchScreen(s, kind, open)
         PAGE_WATCHLIST -> ListScreen(s, "watchlist", open)
         PAGE_HISTORY -> ListScreen(s, "history", open)
-        PAGE_BROWSE -> BrowseScreen(s, kind, open)
+        PAGE_BROWSE -> BrowseScreen(s, kind, browse, open)
         else -> if (top.startsWith("/people/") || top.startsWith("/en/person/")) PersonScreen(s, top, open)
                 else TitleScreen(s, top, { activity.play(it, s.en) }, open, activity.playerReturns.intValue)
     }
