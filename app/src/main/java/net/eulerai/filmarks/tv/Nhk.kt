@@ -70,6 +70,7 @@ class NhkState {
     var home by mutableStateOf<JsonObject?>(null)
     var error by mutableStateOf("")
     val rows = mutableStateMapOf<String, List<JsonObject>>() // playlist id -> its watchable episodes
+    var live by mutableStateOf<List<JsonObject>?>(null)       // the simulcast channels (総合, Eテレ) and what's on
 }
 
 /** The テレビ search's query and results, kept the same way. */
@@ -86,6 +87,12 @@ fun nhkImg(s: Settings, path: String) = if (path == "") "" else s.server + path
 suspend fun nhkPlay(api: Api, id: String): PlayRequest {
     val p = api.get("/app/nhk/ep/$id/play")
     return PlayRequest(p.str("stream_url"), p.str("title"), 0, "", buildJsonObject { put("id", id) }, licenseUrl = p.str("license_url"))
+}
+
+/** The player's request for a live channel (g1, e1). */
+suspend fun nhkLivePlay(api: Api, ch: String): PlayRequest {
+    val p = api.get("/app/nhk/live/$ch/play")
+    return PlayRequest(p.str("stream_url"), p.str("title"), 0, "", buildJsonObject { put("ch", ch) }, licenseUrl = p.str("license_url"))
 }
 
 /** Plays an NHK episode, or says why not. */
@@ -113,6 +120,17 @@ fun NhkHome(s: Settings, st: NhkState, onPlay: (PlayRequest) -> Unit, onOpen: (S
     LaunchedEffect(s) {
         if (st.home == null) runCatching { st.home = api.get("/app/nhk"); st.error = "" }.onFailure { st.error = it.message ?: "error" }
     }
+    // what's on changes: asked again each time the テレビ home is shown
+    LaunchedEffect(s) { runCatching { st.live = api.get("/app/nhk/live").arr("channels") } }
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    fun playLive(ch: JsonObject) {
+        if (!ch.bool("ready")) { Toast.makeText(ctx, tr(s.en, "いまは同時配信がありません", "Not live now"), Toast.LENGTH_SHORT).show(); return }
+        scope.launch {
+            Toast.makeText(ctx, tr(s.en, "準備中…", "Starting…"), Toast.LENGTH_SHORT).show()
+            runCatching { onPlay(nhkLivePlay(api, ch.str("id"))) }.onFailure { Toast.makeText(ctx, it.message ?: "error", Toast.LENGTH_LONG).show() }
+        }
+    }
     val h = st.home
     when {
         st.error != "" -> Text(st.error, color = Palette.red, modifier = Modifier.padding(48.dp))
@@ -123,6 +141,16 @@ fun NhkHome(s: Settings, st: NhkState, onPlay: (PlayRequest) -> Unit, onOpen: (S
                     verticalAlignment = Alignment.CenterVertically) {
                     item { Text("NHK", color = Palette.muted, fontSize = 14.sp, modifier = Modifier.padding(end = 6.dp)) }
                     items(h.arr("genres")) { g -> OutlinedButton(onClick = { onOpen(NHK_GENRE + g.str("id")) }) { Text(g.str("title"), fontSize = 13.sp) } }
+                }
+            }
+            st.live?.takeIf { it.isNotEmpty() }?.let { chans ->
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(tr(s.en, "ライブ（同時配信）", "Live"), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Palette.text, modifier = Modifier.padding(start = 48.dp))
+                        LazyRow(contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            items(chans) { ch -> Box(Modifier.width(260.dp)) { NhkLiveCard(s, ch) { playLive(ch) } } }
+                        }
+                    }
                 }
             }
             items(h.arr("sections")) { sec ->
@@ -143,6 +171,31 @@ fun NhkHome(s: Settings, st: NhkState, onPlay: (PlayRequest) -> Unit, onOpen: (S
                 }
             }
         }
+    }
+}
+
+/** A live channel: what's on now (and next); the picture plays it. */
+@Composable
+fun NhkLiveCard(s: Settings, ch: JsonObject, onPlay: () -> Unit) {
+    val ready = ch.bool("ready")
+    val now = ch["now"].obj()
+    val next = ch["next"].obj()
+    Column(Modifier.alpha(if (ready) 1f else 0.55f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Card(onClick = onPlay, modifier = Modifier.fillMaxWidth().height(146.dp), colors = CardDefaults.colors(containerColor = Palette.bg2)) {
+            Box(Modifier.fillMaxSize()) {
+                Text(ch.str("name"), color = Palette.muted, fontSize = 13.sp, modifier = Modifier.padding(10.dp))
+                AsyncImage(nhkImg(s, ch.str("thumb")), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                Text(if (ready) tr(s.en, "● ライブ", "● LIVE") else tr(s.en, "配信なし", "Not available"),
+                    color = if (ready) Palette.gold else Color.White, fontSize = 11.sp, modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp))
+            }
+        }
+        Text(ch.str("name"), color = Palette.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(now?.str("title") ?: "", color = Palette.text, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            lineHeight = 19.sp, modifier = Modifier.height(40.dp))
+        if (now != null) Text("${now.str("start")}–${now.str("end")}" + if (!now.bool("simul")) tr(s.en, " · ネット配信なし", " · not streamed") else "",
+            color = Palette.muted, fontSize = 11.sp, maxLines = 1)
+        if (next != null) Text(tr(s.en, "次 ", "Next ") + "${next.str("start")} ${next.str("title")}", color = Palette.muted, fontSize = 11.sp,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -198,6 +251,11 @@ fun NhkListScreen(s: Settings, id: String, onPlay: (PlayRequest) -> Unit, onOpen
         loading = false
     }
     LaunchedEffect(id) { if (eps.isEmpty()) load(0) }
+    val prefs = LocalContext.current.getSharedPreferences("nhk", android.content.Context.MODE_PRIVATE)
+    var readyOnly by remember { mutableStateOf(prefs.getBoolean("readyOnly", false)) } // 配信中のみ, kept on the device
+    val shown = if (readyOnly) eps.filter { it.bool("ready") } else eps
+    // 配信中のみ with nothing watchable on the pages so far: fetch on by itself
+    LaunchedEffect(readyOnly, eps.size, loading) { if (readyOnly && !loading && next > 0 && shown.isEmpty()) load(next) }
     val series = id.startsWith("series-tep-")
     LazyVerticalGrid(GridCells.Adaptive(270.dp), contentPadding = PaddingValues(48.dp),
         horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
@@ -205,15 +263,19 @@ fun NhkListScreen(s: Settings, id: String, onPlay: (PlayRequest) -> Unit, onOpen
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(title.ifBlank { "NHK" }, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Palette.text)
                 if (total > 0) Text(tr(s.en, "全${total}本（見られるのは最近の放送のみ）", "$total episodes (only recent ones can be watched)"), color = Palette.muted)
+                OutlinedButton(onClick = { readyOnly = !readyOnly; prefs.edit().putBoolean("readyOnly", readyOnly).apply() }) {
+                    Text((if (readyOnly) "☑ " else "☐ ") + tr(s.en, "配信中のみ", "Watchable only"), fontSize = 13.sp)
+                }
                 if (error != "") Text(error, color = Palette.red)
             }
         }
-        items(eps) { e -> NhkEpisodeCard(s, e, showSeries = !series, onPlay = { play(e) }, onSeries = { onOpen(NHK_LIST + "series-tep-" + e.str("series_id")) }) }
+        items(shown) { e -> NhkEpisodeCard(s, e, showSeries = !series, onPlay = { play(e) }, onSeries = { onOpen(NHK_LIST + "series-tep-" + e.str("series_id")) }) }
         item(span = { GridItemSpan(maxLineSpan) }) {
             when {
                 loading -> Text(tr(s.en, "読み込み中…", "Loading…"), color = Palette.muted)
                 next > 0 -> OutlinedButton(onClick = { scope.launch { load(next) } }) { Text(tr(s.en, "もっと見る", "More")) }
                 eps.isEmpty() && error == "" -> Text(tr(s.en, "エピソードがありません", "No episodes"), color = Palette.muted)
+                shown.isEmpty() && error == "" -> Text(tr(s.en, "いま配信中のエピソードはありません", "Nothing to watch right now"), color = Palette.muted)
             }
         }
     }

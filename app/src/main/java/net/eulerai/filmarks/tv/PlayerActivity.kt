@@ -148,6 +148,10 @@ class PlayerActivity : ComponentActivity() {
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                    // live (NHK keeps ~24 s): after a long pause, back to the live edge
+                    player.seekToDefaultPosition(); player.prepare(); return
+                }
                 Report.send(this@PlayerActivity, "playback",
                     "${error.errorCodeName}: ${error.message} · ${title} · ${Uri.parse(url).host} · cause ${error.cause}")
             }
