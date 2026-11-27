@@ -50,12 +50,14 @@ const val PAGE_BROWSE = "page:browse"
 
 /** Poster rows, as the website's home: Downloads first, then Filmarks' / TMDB rows. */
 @Composable
-fun HomeScreen(s: Settings, kind: String, onKind: (String) -> Unit, onLang: () -> Unit, onSettings: () -> Unit,
-               onPage: (String) -> Unit, onOpen: (String) -> Unit, update: String = "", onUpdate: () -> Unit = {}) {
+fun HomeScreen(s: Settings, kind: String, onKind: (String) -> Unit, onSettings: () -> Unit,
+               onPage: (String) -> Unit, onOpen: (String) -> Unit, update: String = "", onUpdate: () -> Unit = {},
+               nhk: NhkState = NhkState(), onPlay: (PlayRequest) -> Unit = {}) {
     var rows by remember(s, kind) { mutableStateOf<List<HomeRow>?>(null) }
     var pick by remember(s, kind) { mutableStateOf<JsonObject?>(null) }
     var error by remember(s, kind) { mutableStateOf("") }
     LaunchedEffect(s, kind) {
+        if (kind == KIND_TV) return@LaunchedEffect // テレビ: NHK's rows (NhkHome)
         try {
             val d = Api(s).get("/app/home", "lang" to s.lang, "kind" to kind)
             rows = d.arr("rows").map { HomeRow(it.str("title"), it.arr("cards")) }
@@ -69,21 +71,27 @@ fun HomeScreen(s: Settings, kind: String, onKind: (String) -> Unit, onLang: () -
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("FILMARKS ", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Palette.text)
             Text("ARCHIVE", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Palette.gold, modifier = Modifier.padding(end = 24.dp))
-            for ((k, label) in listOf("movie" to tr(s.en, "映画", "Movies"), "drama" to tr(s.en, "ドラマ", "Shows"), "anime" to tr(s.en, "アニメ", "Anime"))) {
+            // the website's switch: the catalogue's three kinds, or テレビ (TVer, NHK)
+            for ((k, label) in listOf("movie" to tr(s.en, "映画", "Movies"), "drama" to tr(s.en, "ドラマ", "Shows"), "anime" to tr(s.en, "アニメ", "Anime"),
+                    KIND_TV to tr(s.en, "テレビ", "Catch-up"))) {
                 FilterChip(selected = kind == k, onClick = { onKind(k) }) { Text(label) }
             }
             Box(Modifier.width(24.dp))
-            OutlinedButton(onClick = { onPage(PAGE_SEARCH) }) { Text(tr(s.en, "検索", "Search")) }
-            OutlinedButton(onClick = { onPage(PAGE_BROWSE) }) { Text(tr(s.en, "作品", "Browse")) }
-            OutlinedButton(onClick = { onPage(PAGE_WATCHLIST) }) { Text(tr(s.en, "ウォッチリスト", "Watchlist")) }
-            OutlinedButton(onClick = { onPage(PAGE_HISTORY) }) { Text(tr(s.en, "履歴", "History")) }
+            if (kind == KIND_TV) {
+                OutlinedButton(onClick = { onPage(PAGE_TVSEARCH) }) { Text(tr(s.en, "番組を検索", "Search TV")) }
+                OutlinedButton(onClick = { onPage(PAGE_TVER) }) { Text("TVer") }
+            } else {
+                OutlinedButton(onClick = { onPage(PAGE_SEARCH) }) { Text(tr(s.en, "検索", "Search")) }
+                OutlinedButton(onClick = { onPage(PAGE_BROWSE) }) { Text(tr(s.en, "作品", "Browse")) }
+                OutlinedButton(onClick = { onPage(PAGE_WATCHLIST) }) { Text(tr(s.en, "ウォッチリスト", "Watchlist")) }
+                OutlinedButton(onClick = { onPage(PAGE_HISTORY) }) { Text(tr(s.en, "履歴", "History")) }
+            }
             OutlinedButton(onClick = { onPage(PAGE_DOWNLOADS) }) { Text(tr(s.en, "ダウンロード", "Downloads")) }
-            OutlinedButton(onClick = { onPage(PAGE_TVER) }) { Text("TVer") }
-            OutlinedButton(onClick = onLang) { Text(if (s.en) "日本語" else "English") }
             OutlinedButton(onClick = onSettings) { Text(tr(s.en, "設定", "Settings")) }
             if (update != "") androidx.tv.material3.Button(onClick = onUpdate) { Text(tr(s.en, "更新 $update", "Update $update")) }
         }
         when {
+            kind == KIND_TV -> NhkHome(s, nhk, onPlay, onOpen)
             error != "" -> Text(error, color = Palette.red, modifier = Modifier.padding(48.dp))
             rows == null -> Text(tr(s.en, "読み込み中…", "Loading…"), color = Palette.muted, modifier = Modifier.padding(48.dp))
             else -> LazyColumn(contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {

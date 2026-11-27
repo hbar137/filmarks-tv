@@ -46,6 +46,7 @@ data class PlayRequest(
     // itself, in place, so a run of episodes keeps going
     val chain: JsonObject? = null,
     val audioLang: String = "", // the title's original language: its audio track is chosen first
+    val licenseUrl: String = "", // a Widevine-protected stream (NHK): where the player asks for its licence
     val path: String = "",      // the title's page (Watch Next opens it)
     val poster: String = "",
 )

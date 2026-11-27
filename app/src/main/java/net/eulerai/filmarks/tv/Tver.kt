@@ -19,10 +19,6 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,7 +32,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,7 +52,8 @@ import java.net.URLEncoder
  * TVer (Japan's free catch-up TV), as the website's /tver: rankings and
  * search as series (番組) or episodes (エピソード), series pages with 本編
  * oldest first and the extras (予告, 解説…) folded, save to the seedbox
- * (保存, 本編を全部保存), follow (登録), and the saved episodes. Everything
+ * (保存, 本編を全部保存), follow (登録), and the saved episodes (searching is
+ * テレビ's search, Nhk.kt, as on the website). Everything
  * comes through the server, which reaches TVer only from Japan (egress).
  */
 
@@ -92,7 +88,6 @@ fun TverScreen(s: Settings, st: TverState, onPlay: (PlayRequest) -> Unit, onOpen
     val api = remember(s) { Api(s) }
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf("") }
-    var typed by remember { mutableStateOf(st.q) }
     val key = "${st.tab}|${st.q}"
     suspend fun load() {
         try {
@@ -125,11 +120,6 @@ fun TverScreen(s: Settings, st: TverState, onPlay: (PlayRequest) -> Unit, onOpen
         status = tr(s.en, "準備中…", "Starting…")
         status = runCatching { onPlay(tverPlay(api, id, from)); "" }.getOrElse { it.message ?: "error" }
     }
-    val colors = OutlinedTextFieldDefaults.colors(
-        focusedTextColor = Palette.text, unfocusedTextColor = Palette.text,
-        focusedBorderColor = Palette.gold, unfocusedBorderColor = Palette.line, cursorColor = Palette.gold,
-        focusedLabelColor = Palette.gold, unfocusedLabelColor = Palette.muted,
-    )
     val d = st.data
     Column(Modifier.fillMaxSize().padding(top = 28.dp)) {
         LazyRow(contentPadding = PaddingValues(start = 48.dp, end = 48.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -138,14 +128,6 @@ fun TverScreen(s: Settings, st: TverState, onPlay: (PlayRequest) -> Unit, onOpen
             items(listOf("series" to tr(s.en, "番組", "Series"), "episodes" to tr(s.en, "エピソード", "Episodes"), "saved" to tr(s.en, "保存済み", "Saved"))) { (v, label) ->
                 if (st.view == v) Button(onClick = {}) { Text(label) } else OutlinedButton(onClick = { st.view = v }) { Text(label) }
             }
-            item {
-                OutlinedTextField(typed, { typed = it }, singleLine = true, colors = colors,
-                    label = { androidx.compose.material3.Text(tr(s.en, "番組・出演者を検索", "Search shows and cast")) },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { st.q = typed.trim(); if (st.view == "saved") st.view = "series" }),
-                    modifier = Modifier.width(360.dp).padding(start = 16.dp))
-            }
-            if (st.q != "") item { OutlinedButton(onClick = { st.q = ""; typed = "" }) { Text(tr(s.en, "× 検索をやめる", "× Clear search")) } }
         }
         if (st.view != "saved" && st.q == "" && d != null) {
             LazyRow(contentPadding = PaddingValues(start = 48.dp, end = 48.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -226,7 +208,7 @@ private fun TverSeriesCard(s: Settings, api: Api, st: TverState, sr: JsonObject,
 
 /** An episode: the thumbnail plays it; under it its save status or 保存. */
 @Composable
-private fun TverEpisodeCard(s: Settings, e: JsonObject, showSeries: Boolean, onPlay: () -> Unit, onSave: () -> Unit, onSeries: () -> Unit) {
+fun TverEpisodeCard(s: Settings, e: JsonObject, showSeries: Boolean, onPlay: () -> Unit, onSave: () -> Unit, onSeries: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Card(onClick = onPlay, modifier = Modifier.fillMaxWidth().height(152.dp), colors = CardDefaults.colors(containerColor = Palette.bg2)) {
             Box(Modifier.fillMaxSize()) {

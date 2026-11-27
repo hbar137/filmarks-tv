@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
             .putExtra("scrobblePath", r.scrobblePath).putExtra("scrobbleBody", r.scrobbleBody?.toString())
             .putExtra("introStart", r.introStart).putExtra("introEnd", r.introEnd).putExtra("outroStart", r.outroStart)
             .putExtra("chain", r.chain?.toString())
-            .putExtra("audioLang", r.audioLang).putExtra("path", r.path).putExtra("poster", r.poster))
+            .putExtra("audioLang", r.audioLang).putExtra("licenseUrl", r.licenseUrl).putExtra("path", r.path).putExtra("poster", r.poster))
     }
 }
 
@@ -109,6 +109,8 @@ private fun App(s: Settings, store: SettingsStore, deepLink: MutableState<String
     var stack by remember { mutableStateOf(listOf<String>()) }
     val browse = remember { BrowseState() } // kept while titles open on top of Browse
     val tver = remember { TverState() }     // TVer's list, kept the same way
+    val nhk = remember { NhkState() }       // テレビ home's NHK rows
+    val tvSearch = remember { TvSearchState() }
     var update by remember { mutableStateOf("") }
     LaunchedEffect(deepLink.value) {
         deepLink.value?.takeIf { it.startsWith("/") }?.let { stack = listOf(it) }
@@ -130,10 +132,10 @@ private fun App(s: Settings, store: SettingsStore, deepLink: MutableState<String
     }
     val open: (String) -> Unit = { if (it != "") stack = stack + it }
     when (val top = stack.lastOrNull()) {
-        null -> if (editing) SetupScreen(s) { scope.launch { store.save(it); editing = false } }
+        null -> if (editing) SetupScreen(s, onLang = { lang -> scope.launch { store.save(s.copy(lang = lang)) } }) { scope.launch { store.save(it); editing = false } }
             else HomeScreen(s, kind, onKind = { kind = it },
-                onLang = { scope.launch { store.save(s.copy(lang = if (s.en) "ja" else "en")) } },
                 onSettings = { editing = true }, onPage = open, onOpen = open,
+                nhk = nhk, onPlay = { activity.play(it, s.en) },
                 update = update, onUpdate = {
                     scope.launch {
                         Toast.makeText(activity, tr(s.en, "ダウンロード中…", "Downloading…"), Toast.LENGTH_SHORT).show()
@@ -148,7 +150,10 @@ private fun App(s: Settings, store: SettingsStore, deepLink: MutableState<String
         PAGE_HISTORY -> ListScreen(s, "history", open)
         PAGE_BROWSE -> BrowseScreen(s, kind, browse, open)
         PAGE_TVER -> TverScreen(s, tver, { activity.play(it, s.en) }, open)
-        else -> if (top.startsWith(TVER_SERIES)) TverSeriesScreen(s, top.removePrefix(TVER_SERIES)) { activity.play(it, s.en) }
+        PAGE_TVSEARCH -> TvSearchScreen(s, tvSearch, { activity.play(it, s.en) }, open)
+        else -> if (top.startsWith(NHK_LIST)) NhkListScreen(s, top.removePrefix(NHK_LIST), { activity.play(it, s.en) }, open)
+                else if (top.startsWith(NHK_GENRE)) NhkGenreScreen(s, top.removePrefix(NHK_GENRE), open)
+                else if (top.startsWith(TVER_SERIES)) TverSeriesScreen(s, top.removePrefix(TVER_SERIES)) { activity.play(it, s.en) }
                 else if (top.startsWith("/people/") || top.startsWith("/en/person/")) PersonScreen(s, top, open)
                 else TitleScreen(s, top, { activity.play(it, s.en) }, open, activity.playerReturns.intValue)
     }
@@ -178,7 +183,7 @@ private fun Modifier.dpadRows(): Modifier {
 
 /** Server address and password (the Kodi password). */
 @Composable
-fun SetupScreen(s: Settings, onSave: (Settings) -> Unit) {
+fun SetupScreen(s: Settings, onLang: (String) -> Unit = {}, onSave: (Settings) -> Unit) {
     var server by remember { mutableStateOf(s.server) }
     var password by remember { mutableStateOf(s.password) }
     val colors = OutlinedTextFieldDefaults.colors(
@@ -187,7 +192,14 @@ fun SetupScreen(s: Settings, onSave: (Settings) -> Unit) {
         focusedLabelColor = Palette.gold, unfocusedLabelColor = Palette.muted, cursorColor = Palette.gold,
     )
     Column(Modifier.padding(64.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        Title(tr(s.en, "サーバー設定", "Server"))
+        Title(tr(s.en, "設定", "Settings"))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text(tr(s.en, "表示言語", "Language"), color = Palette.muted, modifier = Modifier.width(120.dp))
+            for ((l, label) in listOf("ja" to "日本語", "en" to "English")) {
+                if (s.lang == l) Button(onClick = {}) { Text(label) } else OutlinedButton(onClick = { onLang(l) }) { Text(label) }
+            }
+        }
+        Text(tr(s.en, "サーバー", "Server"), color = Palette.muted)
         OutlinedTextField(server, { server = it }, label = { androidx.compose.material3.Text(tr(s.en, "サーバー", "Server")) },
             singleLine = true, colors = colors, modifier = Modifier.width(640.dp).dpadRows(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))

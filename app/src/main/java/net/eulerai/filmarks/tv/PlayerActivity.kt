@@ -76,6 +76,7 @@ class PlayerActivity : ComponentActivity() {
     private var countdown = -1
     private var subsJson: List<JsonObject> = emptyList()
     private var url = ""
+    private var licenseUrl = "" // Widevine (NHK): the device decrypts, the licence comes through the server
     private var title = ""
     // Subtitle timing, per subtitle (id -> [shift, scale]: a cue at t shows at
     // t*scale + shift), kept on the server per file with the one picked
@@ -92,6 +93,7 @@ class PlayerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         url = intent.getStringExtra("url") ?: return finish()
+        licenseUrl = intent.getStringExtra("licenseUrl") ?: ""
         title = intent.getStringExtra("title") ?: ""
         val start = intent.getLongExtra("start", 0)
         en = intent.getBooleanExtra("en", false)
@@ -190,6 +192,7 @@ class PlayerActivity : ComponentActivity() {
 
     /** The stream with the subtitles, each retimed by the server (&shift=&scale=). */
     private fun mediaItem(): MediaItem = MediaItem.Builder().setUri(url)
+        .apply { if (licenseUrl != "") setDrmConfiguration(MediaItem.DrmConfiguration.Builder(C.WIDEVINE_UUID).setLicenseUri(licenseUrl).build()) }
         .setSubtitleConfigurations(subsJson.map {
             val t = timing[it.str("id")]
             val u = it.str("url") + if (t != null && (t[0] != 0.0 || t[1] != 1.0)) "&shift=${t[0]}&scale=${t[1]}" else ""
@@ -507,6 +510,7 @@ class PlayerActivity : ComponentActivity() {
     /** Switches the player to another episode's stream, its saving and scrobbling with it. */
     private fun load(r: PlayRequest) {
         url = r.url
+        licenseUrl = r.licenseUrl
         title = r.title
         progressPath = r.progressPath
         progressBody = r.progressBody
@@ -563,7 +567,7 @@ class PlayerActivity : ComponentActivity() {
     private fun save() {
         val a = api ?: return
         val dur = player.duration
-        if (dur <= 0) return
+        if (dur <= 0 || progressPath == "") return // nothing kept (NHK)
         val body = JsonObject(progressBody + mapOf(
             "position" to JsonPrimitive(player.currentPosition / 1000.0),
             "duration" to JsonPrimitive(dur / 1000.0)))
