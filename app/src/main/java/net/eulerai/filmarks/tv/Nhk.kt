@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -48,6 +49,7 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -57,13 +59,16 @@ import kotlinx.serialization.json.put
  * テレビ: NHK ONE's catch-up (見逃し) and the search of TVer and NHK, as the
  * website's /nhk and /tv/search. NHK's video is Widevine-protected: the
  * server passes the encrypted stream and the licence request along, and the
- * device (its Widevine) decrypts. Nothing can be saved.
+ * device (its Widevine) decrypts. 保存 queues an episode for the server's
+ * capture worker, which records it to the seedbox (an MP4 + Japanese
+ * subtitles, started at night); the saved copies play like any file.
  */
 
 const val KIND_TV = "tv"                 // the home's fourth world, next to 映画 | ドラマ | アニメ
 const val PAGE_TVSEARCH = "page:tvsearch"
 const val NHK_LIST = "nhk:pl:"           // + playlist id, on the page stack
 const val NHK_GENRE = "nhk:genre:"       // + genre (deck) id
+const val PAGE_NHK_SAVES = "page:nhksaves"
 
 /** The テレビ home's NHK rows, kept by the app while pages open on top. */
 class NhkState {
@@ -95,6 +100,31 @@ suspend fun nhkLivePlay(api: Api, ch: String): PlayRequest {
     return PlayRequest(p.str("stream_url"), p.str("title"), 0, "", buildJsonObject { put("ch", ch) }, licenseUrl = p.str("license_url"))
 }
 
+/** The player's request for a saved copy (a plain MP4 on the seedbox) with its subtitles. */
+fun nhkSavedPlay(e: JsonObject): PlayRequest {
+    val subs = e.str("subs").takeIf { it != "" }?.let { Subs(listOf(Sub("nhk-ja", it, "ja", "日本語"))) } ?: Subs()
+    return PlayRequest(e.str("file"), e.str("title"), 0, "", buildJsonObject { put("id", e.str("id")) }, subs = subs)
+}
+
+/** 保存: queues an episode for capture; the map holds what was queued here until the lists reload. */
+@Composable
+fun rememberNhkSave(s: Settings): Pair<Map<String, String>, (String) -> Unit> {
+    val api = remember(s) { Api(s) }
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    val queued = remember { mutableStateMapOf<String, String>() }
+    return queued to { id ->
+        scope.launch {
+            runCatching { api.post("/app/nhk/ep/$id/save", buildJsonObject { }) }
+                .onSuccess {
+                    queued[id] = "queued"
+                    Toast.makeText(ctx, tr(s.en, "保存待ちにしました（録画は夜1時から）", "Queued (recorded from 1 AM)"), Toast.LENGTH_SHORT).show()
+                }
+                .onFailure { Toast.makeText(ctx, it.message ?: "error", Toast.LENGTH_LONG).show() }
+        }
+    }
+}
+
 /** Plays an NHK episode, or says why not. */
 @Composable
 fun rememberNhkPlayer(s: Settings, onPlay: (PlayRequest) -> Unit): (JsonObject) -> Unit {
@@ -117,6 +147,7 @@ fun rememberNhkPlayer(s: Settings, onPlay: (PlayRequest) -> Unit): (JsonObject) 
 fun NhkHome(s: Settings, st: NhkState, onPlay: (PlayRequest) -> Unit, onOpen: (String) -> Unit) {
     val api = remember(s) { Api(s) }
     val play = rememberNhkPlayer(s, onPlay)
+    val (queued, save) = rememberNhkSave(s)
     LaunchedEffect(s) {
         if (st.home == null) runCatching { st.home = api.get("/app/nhk"); st.error = "" }.onFailure { st.error = it.message ?: "error" }
     }
@@ -140,6 +171,7 @@ fun NhkHome(s: Settings, st: NhkState, onPlay: (PlayRequest) -> Unit, onOpen: (S
                 LazyRow(contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     item { Text("NHK", color = Palette.muted, fontSize = 14.sp, modifier = Modifier.padding(end = 6.dp)) }
+                    item { OutlinedButton(onClick = { onOpen(PAGE_NHK_SAVES) }) { Text(tr(s.en, "保存済み", "Saved"), fontSize = 13.sp) } }
                     items(h.arr("genres")) { g -> OutlinedButton(onClick = { onOpen(NHK_GENRE + g.str("id")) }) { Text(g.str("title"), fontSize = 13.sp) } }
                 }
             }
@@ -165,7 +197,8 @@ fun NhkHome(s: Settings, st: NhkState, onPlay: (PlayRequest) -> Unit, onOpen: (S
                     Text(sec.str("title"), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Palette.text, modifier = Modifier.padding(start = 48.dp))
                     if (eps == null) Text(tr(s.en, "読み込み中…", "Loading…"), color = Palette.muted, fontSize = 13.sp, modifier = Modifier.padding(start = 48.dp).height(40.dp))
                     else LazyRow(contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        items(eps) { e -> Box(Modifier.width(260.dp)) { NhkEpisodeCard(s, e, onPlay = { play(e) }, onSeries = { onOpen(NHK_LIST + "series-tep-" + e.str("series_id")) }) } }
+                        items(eps) { e -> Box(Modifier.width(260.dp)) { NhkEpisodeCard(s, e, queued[e.str("id")], onPlay = { play(e) }, onSave = { save(e.str("id")) },
+                            onSeries = { onOpen(NHK_LIST + "series-tep-" + e.str("series_id")) }) } }
                         item { OutlinedButton(onClick = { onOpen(NHK_LIST + id) }) { Text(tr(s.en, "すべて →", "All →")) } }
                     }
                 }
@@ -199,9 +232,10 @@ fun NhkLiveCard(s: Settings, ch: JsonObject, onPlay: () -> Unit) {
     }
 }
 
-/** An NHK episode: the thumbnail plays it (dimmed when it can't be watched now). */
+/** An NHK episode: the thumbnail plays it (dimmed when it can't be watched now); 保存 or its save status under it. */
 @Composable
-fun NhkEpisodeCard(s: Settings, e: JsonObject, showSeries: Boolean = true, onPlay: () -> Unit, onSeries: () -> Unit) {
+fun NhkEpisodeCard(s: Settings, e: JsonObject, queued: String? = null, showSeries: Boolean = true, onPlay: () -> Unit,
+                   onSave: (() -> Unit)? = null, onSeries: () -> Unit) {
     val ready = e.bool("ready")
     Column(Modifier.alpha(if (ready) 1f else 0.55f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Card(onClick = onPlay, modifier = Modifier.fillMaxWidth().height(146.dp), colors = CardDefaults.colors(containerColor = Palette.bg2)) {
@@ -223,7 +257,80 @@ fun NhkEpisodeCard(s: Settings, e: JsonObject, showSeries: Boolean = true, onPla
         Text(listOfNotNull(e.str("date").takeIf { it != "" }, e.str("channel").takeIf { it != "" },
             dur.takeIf { it > 0 }?.let { tr(s.en, "${it / 60}分", "${it / 60} min") }).joinToString(" · "),
             color = Palette.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (showSeries && e.str("series_id") != "") OutlinedButton(onClick = onSeries) { Text(tr(s.en, "番組へ", "Series"), fontSize = 12.sp) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (onSave != null) NhkSaveStatus(s, e.str("save_status").ifEmpty { queued ?: "" }, e.long("save_percent"), ready, onSave)
+            if (showSeries && e.str("series_id") != "") OutlinedButton(onClick = onSeries) { Text(tr(s.en, "番組へ", "Series"), fontSize = 12.sp) }
+        }
+    }
+}
+
+/** An episode's save status, or 保存 when it can be saved (on catch-up now). */
+@Composable
+private fun NhkSaveStatus(s: Settings, status: String, percent: Long, ready: Boolean, onSave: () -> Unit) {
+    when (status) {
+        "done" -> Text("✓ " + tr(s.en, "保存済み", "Saved"), color = Palette.gold, fontSize = 12.sp)
+        "saving" -> Text(tr(s.en, "録画中 ", "Recording ") + "$percent%", color = Palette.muted, fontSize = 12.sp)
+        "queued" -> Text(tr(s.en, "保存待ち", "Queued"), color = Palette.muted, fontSize = 12.sp)
+        "failed" -> if (ready) OutlinedButton(onClick = onSave) { Text(tr(s.en, "保存失敗・再試行", "Failed · retry"), fontSize = 12.sp) }
+        else -> if (ready) OutlinedButton(onClick = onSave) { Text(tr(s.en, "保存", "Save"), fontSize = 12.sp) }
+    }
+}
+
+/** The saved NHK episodes (and those queued or recording): ▶ plays the saved copy, with its subtitles. */
+@Composable
+fun NhkSavesScreen(s: Settings, onPlay: (PlayRequest) -> Unit) {
+    val api = remember(s) { Api(s) }
+    val scope = rememberCoroutineScope()
+    var saves by remember { mutableStateOf<List<JsonObject>?>(null) }
+    var error by remember { mutableStateOf("") }
+    suspend fun load() {
+        runCatching { saves = api.get("/app/nhk/saves").arr("items"); error = "" }.onFailure { error = it.message ?: "error" }
+    }
+    LaunchedEffect(Unit) {
+        load()
+        while (true) { // queued and recording ones move on
+            delay(10_000)
+            if (saves.orEmpty().any { it.str("status") == "queued" || it.str("status") == "saving" }) load()
+        }
+    }
+    fun delete(id: String) = scope.launch {
+        error = runCatching { api.post("/app/nhk/ep/$id/delete", buildJsonObject { }); load(); "" }.getOrElse { it.message ?: "error" }
+    }
+    val list = saves
+    LazyColumn(contentPadding = PaddingValues(48.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(tr(s.en, "NHK 保存済み", "NHK saved"), fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Palette.text)
+                Text(tr(s.en, "録画は毎晩1時〜4時（太平洋時間）。配信終了まで24時間を切った回はすぐに録画します。",
+                    "Recorded nightly 1–4 AM Pacific; an episode leaving within 24 hours is recorded right away."), color = Palette.muted, fontSize = 13.sp)
+                if (error != "") Text(error, color = Palette.red)
+            }
+        }
+        when {
+            list == null -> item { Text(tr(s.en, "読み込み中…", "Loading…"), color = Palette.muted) }
+            list.isEmpty() -> item { Text(tr(s.en, "まだ保存した番組はありません。エピソードの「保存」からどうぞ。", "Nothing saved yet. Use Save on an episode."), color = Palette.muted) }
+            else -> items(list) { e ->
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (e.str("status") == "done") androidx.tv.material3.Button(onClick = { onPlay(nhkSavedPlay(e)) }) { Text("▶", fontSize = 16.sp) }
+                    Column(Modifier.width(620.dp)) {
+                        if (e.str("series_title") != "") Text(e.str("series_title"), color = Palette.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(e.str("title"), color = Palette.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        val dur = e.long("duration")
+                        Text(listOfNotNull(
+                            when (e.str("status")) {
+                                "done" -> tr(s.en, "保存済み", "Saved") + if (e.str("subs") != "") tr(s.en, " · 字幕あり", " · subtitles") else ""
+                                "saving" -> tr(s.en, "録画中 ", "Recording ") + "${e.long("percent")}%"
+                                "queued" -> tr(s.en, "保存待ち", "Queued")
+                                else -> tr(s.en, "保存失敗", "Failed") + e.str("error").takeIf { it != "" }?.let { ": $it" }.orEmpty()
+                            },
+                            dur.takeIf { it > 0 }?.let { tr(s.en, "${it / 60}分", "${it / 60} min") },
+                        ).joinToString(" · "), color = if (e.str("status") == "failed") Palette.red else Palette.muted, fontSize = 12.sp,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (e.str("status") != "saving") OutlinedButton(onClick = { delete(e.str("id")) }) { Text(tr(s.en, "削除", "Delete"), fontSize = 12.sp) }
+                }
+            }
+        }
     }
 }
 
@@ -233,6 +340,7 @@ fun NhkListScreen(s: Settings, id: String, onPlay: (PlayRequest) -> Unit, onOpen
     val api = remember(s) { Api(s) }
     val scope = rememberCoroutineScope()
     val play = rememberNhkPlayer(s, onPlay)
+    val (queued, save) = rememberNhkSave(s)
     val eps = remember(id) { mutableStateListOf<JsonObject>() }
     var title by remember(id) { mutableStateOf("") }
     var total by remember(id) { mutableStateOf(0L) }
@@ -269,7 +377,7 @@ fun NhkListScreen(s: Settings, id: String, onPlay: (PlayRequest) -> Unit, onOpen
                 if (error != "") Text(error, color = Palette.red)
             }
         }
-        items(shown) { e -> NhkEpisodeCard(s, e, showSeries = !series, onPlay = { play(e) }, onSeries = { onOpen(NHK_LIST + "series-tep-" + e.str("series_id")) }) }
+        items(shown) { e -> NhkEpisodeCard(s, e, queued[e.str("id")], showSeries = !series, onPlay = { play(e) }, onSave = { save(e.str("id")) }, onSeries = { onOpen(NHK_LIST + "series-tep-" + e.str("series_id")) }) }
         item(span = { GridItemSpan(maxLineSpan) }) {
             when {
                 loading -> Text(tr(s.en, "読み込み中…", "Loading…"), color = Palette.muted)
@@ -320,6 +428,7 @@ fun TvSearchScreen(s: Settings, st: TvSearchState, onPlay: (PlayRequest) -> Unit
     val api = remember(s) { Api(s) }
     val scope = rememberCoroutineScope()
     val playNhk = rememberNhkPlayer(s, onPlay)
+    val (nhkQueued, saveNhk) = rememberNhkSave(s)
     val focus = remember { FocusRequester() }
     var typed by remember { mutableStateOf(st.q) }
     LaunchedEffect(Unit) { if (st.data == null) runCatching { focus.requestFocus() } }
@@ -376,7 +485,7 @@ fun TvSearchScreen(s: Settings, st: TvSearchState, onPlay: (PlayRequest) -> Unit
                             Box(Modifier.width(260.dp)) {
                                 if (key == "tver") TverEpisodeCard(s, e, showSeries = true, onPlay = { playTver(e.str("id")) }, onSave = { saveTver(e.str("id")) },
                                     onSeries = { onOpen(TVER_SERIES + e.str("series_id")) })
-                                else NhkEpisodeCard(s, e, onPlay = { playNhk(e) }, onSeries = { onOpen(NHK_LIST + "series-tep-" + e.str("series_id")) })
+                                else NhkEpisodeCard(s, e, nhkQueued[e.str("id")], onPlay = { playNhk(e) }, onSave = { saveNhk(e.str("id")) }, onSeries = { onOpen(NHK_LIST + "series-tep-" + e.str("series_id")) })
                             }
                         }
                     }

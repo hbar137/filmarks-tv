@@ -151,6 +151,7 @@ private fun App(s: Settings, store: SettingsStore, deepLink: MutableState<String
         PAGE_BROWSE -> BrowseScreen(s, kind, browse, open)
         PAGE_TVER -> TverScreen(s, tver, { activity.play(it, s.en) }, open)
         PAGE_TVSEARCH -> TvSearchScreen(s, tvSearch, { activity.play(it, s.en) }, open)
+        PAGE_NHK_SAVES -> NhkSavesScreen(s) { activity.play(it, s.en) }
         else -> if (top.startsWith(NHK_LIST)) NhkListScreen(s, top.removePrefix(NHK_LIST), { activity.play(it, s.en) }, open)
                 else if (top.startsWith(NHK_GENRE)) NhkGenreScreen(s, top.removePrefix(NHK_GENRE), open)
                 else if (top.startsWith(TVER_SERIES)) TverSeriesScreen(s, top.removePrefix(TVER_SERIES)) { activity.play(it, s.en) }
